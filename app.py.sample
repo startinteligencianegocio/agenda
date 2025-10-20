@@ -1,0 +1,20 @@
+
+# app.py.sample (exemplo de injeção de CSS e uso de login_view)
+import streamlit as st
+from pathlib import Path
+from login_view import render_login
+
+def inject_global_css():
+    p = Path("style.css")
+    if p.exists():
+        st.markdown(f"<style>{p.read_text(encoding='utf-8')}</style>", unsafe_allow_html=True)
+
+def fake_auth(email, senha):
+    st.success(f"Autenticado como: {email}")
+
+def main():
+    inject_global_css()
+    render_login(fake_auth)
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,10 @@
+streamlit>=1.36.0
+python-dotenv
+supabase
+psycopg2-binary
+bcrypt
+pytz
+streamlit-option-menu
+pandas
+streamlit-sortables
+pillow

@@ -1,0 +1,133 @@
+/* =========================================================
+   STREAMLIT 1.50 — BUTTON COLORS
+   ========================================================= */
+
+/* Primary (form submit "Incluir") — cobre st.form_submit_button e base primary */
+.stApp [data-testid="baseButton-primary"],
+.stApp [data-testid="stFormSubmitButton"] button,
+.stApp .stForm [data-testid="stFormSubmitButton"] button {
+  background: #28B78D !important;
+  color: #ffffff !important;
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+}
+
+/* Secondary (Alterar / Entrar / Salvar / default st.button) */
+.stApp [data-testid="baseButton-secondary"],
+.stApp .stButton > button {
+  background: #243743 !important;
+  color: #ffffff !important;
+  border-radius: 10px !important;
+  font-weight: 600 !important;
+  border: 1px solid rgba(255,255,255,0.12) !important;
+}
+
+/* Delete red via wrapper (.btn-excluir) — força vermelho apenas dentro do container */
+.btn-excluir [data-testid="baseButton-secondary"],
+.btn-excluir .stButton > button,
+.btn-excluir [data-testid="stFormSubmitButton"] button:not([data-testid="baseButton-primary"]) {
+  background: #d32f2f !important;
+  color: #ffffff !important;
+}
+
+/* Hover/active/disabled ergonomics */
+.stApp button {
+  padding: 0.5rem 1rem !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  transition: transform 0.06s ease, filter 0.12s ease, box-shadow 0.12s ease;
+  white-space: nowrap;
+}
+.stApp button:hover { filter: brightness(1.07); transform: translateY(-1px); }
+.stApp button:active { filter: brightness(0.98); transform: translateY(0); }
+.stApp button:disabled { filter: grayscale(0.2) brightness(0.9) !important; opacity: .85 !important; }
+
+/* Right-aligned actions row for lists */
+.actions-right {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.actions-right .stButton { display: inline-block; margin: 0 !important; }
+.actions-right button { min-width: 92px; }
+
+/* =========================================================
+   KPI CARDS
+   ========================================================= */
+.kpi-row { margin-top: .5rem; margin-bottom: 1rem; }
+
+.kpi-card {
+  background: linear-gradient(135deg, #28B78D 0%, #243743 60%, #A1A9AE 100%);
+  border-radius: 16px;
+  padding: 18px 20px;
+  color: #ffffff;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  border: 1px solid rgba(255,255,255,0.08);
+  min-height: 96px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+
+  /* >>> espaço entre cards quando empilhados (mobile) <<< */
+  margin-bottom: 12px;
+}
+
+.kpi-value {
+  font-size: 32px;
+  line-height: 1;
+  font-weight: 800;
+  margin-bottom: 6px;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.35);
+}
+
+.kpi-label {
+  font-size: 14px;
+  opacity: 0.95;
+  font-weight: 500;
+  letter-spacing: 0.2px;
+  text-shadow: 0 1px 1px rgba(0,0,0,0.25);
+}
+
+/* Em telas menores, aumenta um pouco o respiro e ajusta padding */
+@media (max-width: 768px){
+  .kpi-card { margin-bottom: 16px; padding: 16px 18px; }
+}
+
+/* =========================================================
+   TITLES & KANBAN
+   ========================================================= */
+.kanban-title { font-weight: 600; margin-bottom: 0.5rem; }
+
+/* =========================================================
+   MENU / TABS — redução leve da fonte para evitar quebra
+   ========================================================= */
+.nav-link, .stTabs [data-baseweb="tab-list"] button {
+  font-size: 18px !important;
+}
+
+/* =========================================================
+   HEADERS SPACING
+   ========================================================= */
+h2, .stMarkdown h2 { margin-top: 0; }
+
+/* =========================================================
+   FORM & LAYOUT FINESSE
+   ========================================================= */
+
+/* Evita estoura de largura de ícones/botões compactos (ex.: WhatsApp) */
+.icon-button, .icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 8px !important;
+}
+
+/* Ajuste suave nos inputs em temas escuros */
+.stApp input, .stApp textarea, .stApp select {
+  border-radius: 8px !important;
+}
+
+/* Alinhamento melhor nos grupos de botões dentro de containers */
+.stApp .stContainer .stButton > button { margin-right: 6px; }

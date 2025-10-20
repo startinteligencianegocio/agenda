@@ -1,0 +1,196 @@
+Chat, voce é um excelente programador python com streamlit.
+Eu preciso da sua ajuda para desenvolver uma aplicação de Agenda 
+para profissionais liberais, Ex: salão de cabelereiros, estecicistas, mediso, dentistas etc...
+
+1. A aplicação tera como banco de dados o SUPABASE.
+2. O login deve ser através da tabela ag_profissionais verificando os campos: email, senha_hash, Ativo, data_licenca, data_teste e is_admin,  
+3. A configuração do banco de dados deve ser feito por um arquivo separado (database.py que ja esta configurado conforme abaixo
+database.py:
+import os
+import psycopg2
+from supabase import create_client
+from dotenv import load_dotenv
+
+# ===============================
+# Caminho absoluto do .env
+# ===============================
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+dotenv_path = os.path.join(BASE_DIR, ".env")
+load_dotenv(dotenv_path)
+
+# ===============================
+# SUPABASE SDK
+# ===============================
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+# Verificação com print para debug
+print("DEBUG: SUPABASE_URL =", SUPABASE_URL)
+print("DEBUG: SUPABASE_KEY =", SUPABASE_KEY[:10], "...")  # só mostra os 10 primeiros caracteres
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("❌ SUPABASE_URL ou SUPABASE_KEY não encontrados no .env")
+
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# ===============================
+# Conexão PostgreSQL direta
+# ===============================
+def get_connection():
+    conn = psycopg2.connect(
+        host=os.getenv("SUPABASE_DB_HOST"),
+        dbname=os.getenv("SUPABASE_DB_NAME"),
+        user=os.getenv("SUPABASE_DB_USER"),
+        password=os.getenv("SUPABASE_DB_PASS"),
+        port=os.getenv("SUPABASE_DB_PORT", "5432")
+    )
+    return conn
+
+3.1 A aplicação deve seguir rigorasamente a Definição Banco de Dados conforme abaixo definida:
+CREATE TABLE ag_profissionais (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE, -- vínculo com supabase.auth
+	is_admin BOOLEAN DEFAULT FALSE,
+    nome VARCHAR(150) NOT NULL,
+    email VARCHAR(150) UNIQUE NOT NULL,
+    telefone VARCHAR(20),
+    data_licenca DATE NOT NULL,
+	data_teste date null,
+    ativo BOOLEAN DEFAULT TRUE,
+    segunda BOOLEAN DEFAULT FALSE,
+    terca BOOLEAN DEFAULT FALSE,
+    quarta BOOLEAN DEFAULT FALSE,
+    quinta BOOLEAN DEFAULT FALSE,
+    sexta BOOLEAN DEFAULT FALSE,
+    sabado BOOLEAN DEFAULT FALSE,
+    domingo BOOLEAN DEFAULT FALSE,
+    hora_inicio TIME,
+    hora_fim TIME,
+    intervalo_minutos INT DEFAULT 30,
+    criado_em TIMESTAMP DEFAULT NOW()
+);
+
+
+CREATE TABLE ag_tipos_servicos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    profissional_id UUID NOT NULL REFERENCES ag_profissionais(id) ON DELETE CASCADE,
+    nome VARCHAR(150) NOT NULL,
+    descricao TEXT,
+    valor_padrao NUMERIC(10,2) NOT NULL,
+	ativo char(01) not null,
+    duracao_minutos INT NOT NULL DEFAULT 30,
+    criado_em TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE ag_agenda (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    profissional_id UUID NOT NULL REFERENCES ag_profissionais(id) ON DELETE CASCADE,
+	cliente_id INT not NULL,
+    cliente_nome VARCHAR(150) NOT NULL,
+    cliente_telefone VARCHAR(20),
+    data_atendimento DATE NOT NULL,
+    hora_inicio TIME NOT NULL,
+    hora_fim TIME NOT NULL,
+    status VARCHAR(20) DEFAULT 'Pendente', -- Pendente, Confirmado, Concluído, Cancelado
+    observacoes TEXT,
+    criado_em TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE ag_agenda_servicos (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agenda_id UUID NOT NULL REFERENCES ag_agenda(id) ON DELETE CASCADE,
+    servico_id UUID NOT NULL REFERENCES ag_tipos_servicos(id) ON DELETE CASCADE,
+	profissional_id UUID NOT NULL REFERENCES ag_profissionais(id),
+    quantidade INT DEFAULT 1,
+    valor_unitario NUMERIC(10,2) NOT NULL,
+	valor_total NUMERIC(10,2) NOT NULL,
+    criado_em TIMESTAMP DEFAULT NOW()
+);
+
+
+
+4. o Menu da aplicação deve ser conforme modelo abaixo
+
+#pip install streamlit-option-menu
+
+import streamlit as st
+from streamlit_option_menu import option_menu
+
+def streamlit_menu():
+   # 2. horizontal menu with custom style
+   selected = option_menu(
+       menu_title=None,  # required
+       options=["Dashboard", "Tipos de Serviços", "Lançamento de Serviços", "Agenda", "Profissionais"],  # required
+       icons=["file-bar-graph-fill", "book", "envelope", "calendar-date-fill", "people-fill"],  # optional
+       menu_icon="cast",  # optional
+       default_index=0,  # optional
+       orientation="horizontal",
+       styles={
+           "container": {"padding": "0!important", "background-color": "#fafafa"},
+           "icon": {"color": "orange", "font-size": "25px"},
+           "nav-link": {
+               "font-size": "25px",
+               "text-align": "left",
+               "margin": "0px",
+               "--hover-color": "#eee",
+           },
+           "nav-link-selected": {"background-color": "green"},
+       },
+   )
+   return selected
+
+OBS: o Item de Menu "Profissionais" deve estar visivel somente quando o login é feito por um profissional is_admin = TRUE
+     Quando um novo profissional novo é cadastrado pelo administrador do sistema, deve ser salvo na  tabela do supabase ag_profissionais do sistema.
+     ja existe um usuario "startinteligencianegocio@gmail.com" devidamente cadastrado. 
+	   
+5. Após o login efetuado com sucesso, a aplicação deve apresentar a pagina inicial "dashboard.py"
+onde vai conter no topo da pagina, o logo tipo "start.png" que estara na pasta raiz do projeto,
+e o Titulo "Agenda Profissional" que tambem deve estar presente nas demais pagina do sistema.
+Logo abaixo devemos ter 4 kpi's, posicionados em 4 colunas, um ao lado do outro, com um devido padding para separação, com as seguintes informações:
+a) Quantidade de Atendimentos do dia
+b) Quantidade de Atendimentos Mes Anterior (mes imediatamente anterior ao atual)
+c) Quantidade de Atendimentos no mes (atendimentos ate o dia imediatamente anterior ao atual)
+d) Quantidade total de Atendimentos no mes (a + c)
+Estes kpi's devem ter uma estilização com fundo em cor #28B78D podendo ter um degrade para as cores #243743 e #A1A9AE.
+Precisamos adaptar a cor da font de acordo com o degrade formado.
+
+
+
+
+6. Todos os cadastros do sistema deve seguir o seguinte padrão:
+6.1 Formulario de Cadastro para inclusão.
+6.2 Tabela com os cadastros efetuados logo abaixo do formulario de inclusão, com os botões de "Alterar" "Excluir" em cada Lançamento.
+6.3 ao clicar no botão "Alterar" devemos trazer um formulario Modal com os campos preenchidos para alteração, e o botão "Salvar".
+6.4 ao clicar bi botão "Excluir" devemos trazer uma mensagem de confirmação para exclusão definitiva.
+6.5 no caso de exclusão da agenda, é necessario verificar tambem se existem serviços ag_servicos e exclui-los tambem
+
+7.O lancamento da Agenda, deve seguir o padrão (Drag-And_drop) estilo trello. precisamos ter uma estilização para ficar com um ótima aparencia.
+podemos utilizar das cores  #28B78D - #243743 e #A1A9AE.
+na listagem da agenda, alem dos botões "Alterar", "Excluir" devemos ter um terceiro botão "Enviar Notificação" para enviar um lembrete por WhatsApp.
+para isto ja temos um rotina previamente criada, conforme segue.
+
+whatsapp_notifier.py:
+from database import listar_registros
+from datetime import datetime, timedelta
+
+def notificar_agendamentos():
+    hoje = datetime.today().date()
+    amanha = hoje + timedelta(days=1)
+    agendamentos = listar_registros("ag_agenda")
+    links = []
+    for ag in agendamentos:
+        if ag["data_atendimento"] == str(amanha):
+            numero = ag["cliente_telefone"].replace(" ", "").replace("-", "")
+            msg = f"Aqui é {ag['profissional_nome']}, você tem um horário agendado amanhã dia {ag['data_atendimento']} às {ag['hora_inicio']} hrs."
+            link = f"https://wa.me/{numero}?text={msg.replace(' ', '%20')}"
+            links.append(link)
+    return links
+
+8. vamos criar um arquivo style.css para possivel adaptação em cores nos inputs, menu,  tabelas, titulos botões etc...
+
+ok, para o primeiro momento é isto, vamos fazer uma primeira geração do app completo com todos os cruds conforme solicitado
+
+
+
+
+
