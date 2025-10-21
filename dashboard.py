@@ -178,7 +178,7 @@ def render():
     c1, c2, c3, c4 = st.columns(4, gap="small")
     with c1: _kpi_card("Atendimentos do dia", a)
     with c2: _kpi_card("Atendimentos mês anterior", b)
-    with c3: _kpi_card("Atendimentos no mês (até ontem)", c)
+    with c3: _kpi_card("Atend. no mês (até ontem)", c)
     with c4: _kpi_card("Total no mês (a + c)", d)
 
     # Linha 2 — KPIs por status (Confirmados, Pendentes, Cancelados, Concluídos hoje)

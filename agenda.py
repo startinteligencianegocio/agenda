@@ -1,17 +1,36 @@
 # agenda.py
+import re
+import pandas as pd
 import streamlit as st
 from datetime import date, time, datetime, timedelta
 from urllib.parse import quote
-import pandas as pd
+from typing import Optional, Dict
 
 from database import listar_registros, inserir_registro, atualizar_registro, excluir_registro
-from masklib import masked_text_input, PHONE_BR
-from utils_layout import whatsapp_icon
+from utils_layout import whatsapp_icon  # se não quiser mais o ícone, pode remover este import
 
 STATUS = ["Pendente", "Confirmado", "Concluído", "Cancelado"]
 FORM_NS = "agenda_form_v"
 
+# ===========================
+# Utilidades de telefone (BR)
+# ===========================
+def _digits_only(s: Optional[str]) -> str:
+    return re.sub(r"\D", "", s or "")
 
+def _format_phone_br(s: Optional[str]) -> str:
+    d = _digits_only(s)
+    if len(d) >= 11:
+        return f"({d[:2]}) {d[2:7]}-{d[7:11]}"
+    if len(d) == 10:
+        return f"({d[:2]}) {d[2:6]}-{d[6:10]}"
+    if len(d) >= 2:
+        return f"({d[:2]}) {d[2:]}"
+    return d
+
+# ===========================
+# Cabeçalho / helpers gerais
+# ===========================
 def _header():
     col_logo, col_title = st.columns([1, 6])
     with col_logo:
@@ -19,47 +38,50 @@ def _header():
     with col_title:
         st.markdown("<h2>Agenda</h2>", unsafe_allow_html=True)
 
-
 def _carregar_clientes(prof_id: str):
     return listar_registros("ag_clientes", {"profissional_id": prof_id}, order="nome")
 
-
-def _carregar_profissional(prof_id: str) -> dict | None:
+def _carregar_profissional(prof_id: str) -> Optional[Dict]:
     arr = listar_registros("ag_profissionais", {"id": prof_id})
     return arr[0] if arr else None
-
 
 def _v() -> int:
     if FORM_NS not in st.session_state:
         st.session_state[FORM_NS] = 0
     return st.session_state[FORM_NS]
 
-
 def _k(name: str) -> str:
     return f"{FORM_NS}_{name}_{_v()}"
 
-
+# ===========================
+# Modal de edição de agenda
+# ===========================
 @st.dialog("Editar Atendimento")
 def modal_editar(item):
     with st.form(f"form_edit_ag_{item['id']}"):
         cliente_nome = st.text_input("Cliente", value=item.get("cliente_nome", ""))
-        tel_masked = masked_text_input(
+        tel_raw = st.text_input(
             "Telefone",
-            key=f"tel_ag_edit_{item['id']}",
-            mask=PHONE_BR,
             value=item.get("cliente_telefone", ""),
-            in_form=True,
+            key=f"tel_ag_edit_{item['id']}",
+            help="Digite apenas números ou no formato (DD) 9XXXX-XXXX"
         )
+        tel_preview = _format_phone_br(tel_raw)
+        if tel_preview and tel_preview != tel_raw:
+            st.caption(f"Formatado: {tel_preview}")
+
         data_atendimento = st.date_input("Data", value=date.fromisoformat(item.get("data_atendimento")))
         hora_inicio = st.time_input("Hora início", value=time.fromisoformat(item.get("hora_inicio")))
         hora_fim = st.time_input("Hora fim", value=time.fromisoformat(item.get("hora_fim")))
         status = st.selectbox("Status", STATUS, index=STATUS.index(item.get("status", "Pendente")))
         observacoes = st.text_area("Observações", value=item.get("observacoes", ""))
         salvar = st.form_submit_button("Salvar")
+
     if salvar:
+        telefone_fmt = _format_phone_br(tel_raw)
         atualizar_registro("ag_agenda", item["id"], {
             "cliente_nome": cliente_nome,
-            "cliente_telefone": tel_masked,
+            "cliente_telefone": telefone_fmt,
             "data_atendimento": str(data_atendimento),
             "hora_inicio": str(hora_inicio),
             "hora_fim": str(hora_fim),
@@ -69,7 +91,9 @@ def modal_editar(item):
         st.success("Atualizado!")
         st.rerun()
 
-
+# ===========================
+# WhatsApp
+# ===========================
 def _whatsapp_link(nome_prof: str, tel: str, data_str: str, hora_ini: str):
     num = (tel or "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
     msg = (
@@ -78,78 +102,52 @@ def _whatsapp_link(nome_prof: str, tel: str, data_str: str, hora_ini: str):
     )
     return f"https://wa.me/{num}?text={quote(msg)}"
 
-
-# ----------------------
-# Utilidades Tab 3
-# ----------------------
+# ===========================
+# Utilidades Tab 3 (slots)
+# ===========================
 def _to_dt(d: date, t: time) -> datetime:
     return datetime.combine(d, t)
 
-
 def _overlaps(a_ini: datetime, a_fim: datetime, b_ini: datetime, b_fim: datetime) -> bool:
-    # intervalo [início, fim)
     return (a_ini < b_fim) and (a_fim > b_ini)
 
-
 def _weekday_iso(d: date) -> int:
-    # ISO: Monday=1 ... Sunday=7
     return (d.weekday() + 1)
-
 
 def _weekday_pt(d: date) -> str:
     nomes = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
     return nomes[d.weekday()]
 
-
 def _feriados_fixos_br(ano: int) -> set[date]:
-    # Fixos nacionais (sem móveis)
-    base = [
-        (1, 1),   # Confraternização Universal
-        (4, 21),  # Tiradentes
-        (5, 1),   # Dia do Trabalho
-        (9, 7),   # Independência
-        (10, 12), # N. Sra. Aparecida
-        (11, 2),  # Finados
-        (11, 15), # Proclamação da República
-        (12, 25), # Natal
-    ]
+    base = [(1,1),(4,21),(5,1),(9,7),(10,12),(11,2),(11,15),(12,25)]
     return {date(ano, m, d) for (m, d) in base}
 
-
-def _dia_permitido(d: date, prof: dict) -> bool:
+def _dia_permitido(d: date, prof: Dict) -> bool:
     ds = (prof.get("dias_semana") or "").strip()
     if ds:
         permitidos = {int(x) for x in ds.split(",") if x.strip().isdigit()}
         return _weekday_iso(d) in permitidos
     wd = _weekday_iso(d)
-    if wd in {1, 2, 3, 4, 5}:
-        return True
-    if wd == 6:
-        return bool(prof.get("aceita_sabado"))
-    if wd == 7:
-        return bool(prof.get("aceita_domingo"))
+    if wd in {1,2,3,4,5}: return True
+    if wd == 6: return bool(prof.get("aceita_sabado"))
+    if wd == 7: return bool(prof.get("aceita_domingo"))
     return True
 
-
-def _as_time(prof: dict | None, field: str, default: time | None) -> time | None:
-    if not prof:
-        return default
+def _as_time(prof: Optional[Dict], field: str, default: Optional[time]) -> Optional[time]:
+    if not prof: return default
     val = prof.get(field)
-    if not val:
-        return default
+    if not val: return default
     try:
         s = str(val)
-        if len(s) == 5:
-            s += ":00"
+        if len(s) == 5: s += ":00"
         hh, mm, ss = map(int, s.split(":"))
         return time(hh, mm, ss)
     except Exception:
         return default
 
-
 def _build_grade_disponibilidade(
     dados_agenda: list,
-    prof: dict,
+    prof: Dict,
     prof_id: str,
     data_ini: date,
     data_fim: date,
@@ -157,29 +155,18 @@ def _build_grade_disponibilidade(
     jornada_fim: time,
     slot_min: int,
     buffer_min: int,
-    almoco_ini: time | None,
-    almoco_fim: time | None,
+    almoco_ini: Optional[time],
+    almoco_fim: Optional[time],
     considerar_feriados: bool,
     capacidade: int,
 ) -> pd.DataFrame:
-    """
-    Gera slots e marca Disponível/Ocupado conforme:
-      - dias permitidos pelo profissional
-      - jornada e intervalo de almoço (slots no almoço são ignorados)
-      - buffer entre atendimentos (aplicado ao fim do slot)
-      - capacidade simultânea
-    """
     rows = []
-
-    # Índice por data com atendimentos do período
     idx = {}
     for a in dados_agenda:
-        if str(a.get("profissional_id")) != str(prof_id):
-            continue
+        if str(a.get("profissional_id")) != str(prof_id): continue
         try:
             d = date.fromisoformat(a.get("data_atendimento"))
-            if not (data_ini <= d <= data_fim):
-                continue
+            if not (data_ini <= d <= data_fim): continue
             hi = time.fromisoformat(a.get("hora_inicio"))
             hf = time.fromisoformat(a.get("hora_fim"))
         except Exception:
@@ -192,7 +179,6 @@ def _build_grade_disponibilidade(
             "obs": a.get("observacoes", "")
         })
 
-    # Feriados fixos
     feriados = set()
     if considerar_feriados:
         for an in {data_ini.year, data_fim.year}:
@@ -200,31 +186,23 @@ def _build_grade_disponibilidade(
 
     dia = data_ini
     while dia <= data_fim:
-        if not _dia_permitido(dia, prof):
-            dia += timedelta(days=1)
-            continue
-        if considerar_feriados and dia in feriados:
-            dia += timedelta(days=1)
-            continue
+        if not _dia_permitido(dia, prof) or (considerar_feriados and dia in feriados):
+            dia += timedelta(days=1); continue
 
         slot_ini = _to_dt(dia, jornada_ini)
         jornada_f = _to_dt(dia, jornada_fim)
 
         while slot_ini < jornada_f:
             slot_fim = slot_ini + timedelta(minutes=int(slot_min))
-            if slot_fim > jornada_f:
-                break
+            if slot_fim > jornada_f: break
 
-            # Ignora slot dentro do almoço
             if almoco_ini and almoco_fim:
                 a_ini = _to_dt(dia, almoco_ini)
                 a_fim = _to_dt(dia, almoco_fim)
                 if _overlaps(slot_ini, slot_fim, a_ini, a_fim):
-                    # pula direto para o fim do almoço
                     slot_ini = max(slot_fim, a_fim)
                     continue
 
-            # Conta sobreposições
             sobrepos = 0
             det_cliente = det_status = det_obs = ""
             for ag in idx.get(dia, []):
@@ -234,7 +212,6 @@ def _build_grade_disponibilidade(
                         det_cliente, det_status, det_obs = ag["cliente"], ag["status"], ag["obs"]
 
             situacao = "Disponível" if sobrepos < int(capacidade or 1) else "Ocupado"
-
             rows.append({
                 "Data": dia.strftime("%Y-%m-%d"),
                 "Dia Semana": _weekday_pt(dia),
@@ -246,7 +223,6 @@ def _build_grade_disponibilidade(
             })
 
             slot_ini = slot_fim + timedelta(minutes=int(buffer_min or 0))
-
         dia += timedelta(days=1)
 
     df = pd.DataFrame(rows)
@@ -256,10 +232,9 @@ def _build_grade_disponibilidade(
         df = df.sort_values(["__d", "__h"]).drop(columns=["__d", "__h"])
     return df
 
-
-# ----------------------
-# RENDER
-# ----------------------
+# ===========================
+# RENDER PRINCIPAL
+# ===========================
 def render():
     _header()
     u = st.session_state.get("user", {})
@@ -270,7 +245,6 @@ def render():
         st.error("Profissional não identificado na sessão.")
         return
 
-    # flash pós-inclusão
     if st.session_state.get("flash_agenda_ok"):
         st.toast("✅ Agenda inserida com sucesso!", icon="🎉")
         st.success("Agenda inserida com sucesso!")
@@ -331,7 +305,7 @@ def render():
                 "profissional_id": prof_id,
                 "cliente_id": int(cli["id"]),
                 "cliente_nome": cli.get("nome", ""),
-                "cliente_telefone": cli.get("telefone", ""),
+                "cliente_telefone": _format_phone_br(cli.get("telefone", "")),
                 "data_atendimento": str(data_atendimento),
                 "hora_inicio": str(hora_inicio),
                 "hora_fim": str(hf.time()),
@@ -345,17 +319,77 @@ def render():
     # ---------------- TAB 2: Dashboard ----------------
     with tab2:
         st.subheader("Resumo da Agenda")
+
         total = len(dados)
         por_status = {s: 0 for s in STATUS}
         for a in dados:
-            por_status[a.get("status", "Pendente")] = por_status.get(a.get("status", "Pendente"), 0) + 1
+            s = a.get("status", "Pendente")
+            por_status[s] = por_status.get(s, 0) + 1
 
-        k1, k2, k3, k4, k5 = st.columns(5)
-        k1.metric("Total", total)
-        k2.metric("Pendente", por_status.get("Pendente", 0))
-        k3.metric("Confirmado", por_status.get("Confirmado", 0))
-        k4.metric("Concluído", por_status.get("Concluído", 0))
-        k5.metric("Cancelado", por_status.get("Cancelado", 0))
+        ref_label = date.today().strftime("%Y/%m")
+
+        # ===== CSS para KPIs e botões do Kanban =====
+        st.markdown("""
+        <style>
+        /* KPIs */
+        .kpi-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px;margin:8px 0 18px 0}
+        @media(max-width:1100px){.kpi-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+        @media(max-width:700px){.kpi-grid{grid-template-columns:1fr}}
+        .kpi{position:relative;border-radius:16px;padding:16px 18px;background:#0e1117;border:1px solid rgba(255,255,255,.06);
+             box-shadow:0 1px 0 rgba(255,255,255,.06) inset, 0 10px 20px rgba(0,0,0,.25);color:#fff;}
+        .kpi *{color:#fff !important;}
+        .kpi .ref{font-size:12px;opacity:.85;margin-bottom:8px;letter-spacing:.2px}
+        .kpi .title{font-size:15px;opacity:.95;margin:0 0 4px 0}
+        .kpi .value{font-size:32px;font-weight:800;line-height:1.1;margin:2px 0 6px 0}
+        .kpi .sub{font-size:13px;opacity:.9}
+        .kpi.total{background:linear-gradient(145deg,#1f2937,#111827)}
+        .kpi.pendente{background:linear-gradient(145deg,#4b5563,#374151)}
+        .kpi.confirmado{background:linear-gradient(145deg,#0f766e,#0b5c57)}
+        .kpi.concluido{background:linear-gradient(145deg,#166534,#14532d)}
+        .kpi.cancelado{background:linear-gradient(145deg,#7f1d1d,#661616)}
+        .kpi .badge{position:absolute;top:10px;right:12px;font-size:12px;padding:4px 10px;border-radius:999px;
+                    background:rgba(255,255,255,.18);backdrop-filter:blur(6px);color:#fff;}
+
+        /* Botões do Kanban (cores e largura total) */
+        .stButton > button{
+          width:100%; padding:10px 14px; border-radius:12px; font-weight:700; color:#fff;
+          border:1px solid rgba(255,255,255,.15);
+        }
+        .btn-mover > button{ background:linear-gradient(145deg,#0ea5a3,#0b7f7e); }
+        .btn-editar > button{ background:linear-gradient(145deg,#2563eb,#1e3a8a); }
+        .btn-excluir > button{ background:linear-gradient(145deg,#b91c1c,#7f1d1d); }
+
+        /* Botão WhatsApp como <a> block */
+        .wa-btn{
+          display:block; width:100%; padding:10px 14px; border-radius:12px; font-weight:800; text-align:center;
+          background:linear-gradient(145deg,#22c55e,#15803d); color:#fff !important; text-decoration:none;
+          border:1px solid rgba(255,255,255,.15);
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+        # ===== KPIs =====
+        def _pct(x, tot): return f"{(100*x/tot):.0f}%" if tot > 0 else "0%"
+        pend = por_status.get("Pendente", 0)
+        conf = por_status.get("Confirmado", 0)
+        conc = por_status.get("Concluído", 0)
+        canc = por_status.get("Cancelado", 0)
+
+        kpi_html = f"""
+        <div class="kpi-grid">
+          <div class="kpi total"><div class="badge">Geral</div><div class="ref">Referência: {ref_label}</div>
+            <div class="title">Atendimentos</div><div class="value">{total}</div><div class="sub">100%</div></div>
+          <div class="kpi pendente"><div class="badge">Status</div><div class="ref">Referência: {ref_label}</div>
+            <div class="title">Pendente</div><div class="value">{pend}</div><div class="sub">{_pct(pend, total)} do total</div></div>
+          <div class="kpi confirmado"><div class="badge">Status</div><div class="ref">Referência: {ref_label}</div>
+            <div class="title">Confirmado</div><div class="value">{conf}</div><div class="sub">{_pct(conf, total)} do total</div></div>
+          <div class="kpi concluido"><div class="badge">Status</div><div class="ref">Referência: {ref_label}</div>
+            <div class="title">Concluído</div><div class="value">{conc}</div><div class="sub">{_pct(conc, total)} do total</div></div>
+          <div class="kpi cancelado"><div class="badge">Status</div><div class="ref">Referência: {ref_label}</div>
+            <div class="title">Cancelado</div><div class="value">{canc}</div><div class="sub">{_pct(canc, total)} do total</div></div>
+        </div>
+        """
+        st.markdown(kpi_html, unsafe_allow_html=True)
 
         st.divider()
         st.subheader("Atendimentos por Status (Kanban)")
@@ -363,14 +397,13 @@ def render():
         dados_por_status = {s: [] for s in STATUS}
         for a in dados:
             s = a.get("status", "Pendente")
-            if s not in dados_por_status:
-                s = "Pendente"
+            if s not in dados_por_status: s = "Pendente"
             dados_por_status[s].append(a)
 
         cols = st.columns(4)
         for stt, col in zip(STATUS, cols):
             with col:
-                st.markdown(f"<div class='kanban-title {stt.lower()}'>{stt}</div>", unsafe_allow_html=True)
+                st.markdown(f"**{stt}**")
                 for a in dados_por_status[stt]:
                     with st.container(border=True):
                         st.write(f"**{a['cliente_nome']}**")
@@ -378,25 +411,49 @@ def render():
                         if a.get("observacoes"):
                             st.write(a["observacoes"])
 
-                        m1, m2 = st.columns([2, 1])
+                        # select mover
                         destinos = [s for s in STATUS if s != stt]
-                        novo_status = m1.selectbox("Mover para", options=destinos, key=f"mv_to_{a['id']}")
-                        mover = m2.button("Mover", key=f"mv_btn_{a['id']}")
+                        novo_status = st.selectbox(
+                            "Mover para",
+                            options=destinos,
+                            key=f"mv_to_{a['id']}",
+                            index=0,
+                            label_visibility="collapsed",
+                            placeholder="Mover para…"
+                        )
+
+                        # === 2 colunas largas: esquerda (Mover/Alterar), direita (Excluir/WhatsApp)
+                        left, right = st.columns(2)
+                        with left:
+                            mover = st.button("Mover", key=f"mv_btn_{a['id']}", type="secondary", use_container_width=True)
+                            editar = st.button("Alterar", key=f"ag_edit_{a['id']}", type="secondary", use_container_width=True)
+                            # classes de cor
+                            st.markdown("<style>#mv_btn_%s button{}</style>" % a['id'], unsafe_allow_html=True)
+                        with right:
+                            excluir = st.button("Excluir", key=f"ag_del_{a['id']}", type="secondary", use_container_width=True)
+                            link = _whatsapp_link(prof_nome, a.get("cliente_telefone", ""), a["data_atendimento"], a["hora_inicio"])
+                            st.markdown(f"<a class='wa-btn' href='{link}' target='_blank'>WhatsApp</a>", unsafe_allow_html=True)
+
+                        # aplica cores (via classes do CSS acima)
+                        # (o Streamlit não deixa setar className direto; o CSS global já estiliza .stButton > button por ordem de criação)
+                        # para reforçar, podemos embrulhar com divs nomeadas:
+                        st.markdown(
+                            f"""
+                            <style>
+                            div[data-testid="stButton"]:has(button[title="mv_btn_{a['id']}"]) > button{{}}
+                            </style>
+                            """,
+                            unsafe_allow_html=True
+                        )
+
+                        # ações
                         if mover:
                             atualizar_registro("ag_agenda", a["id"], {"status": novo_status})
                             st.success(f"Movido para {novo_status}")
                             st.rerun()
-
-                        cbtn1, cbtn2, cicon = st.columns([1, 1, 0.5])
-                        edit = cbtn1.button("Alterar", key=f"ag_edit_{a['id']}")
-                        delete = cbtn2.button("Excluir", key=f"ag_del_{a['id']}")
-                        link = _whatsapp_link(prof_nome, a.get("cliente_telefone", ""), a["data_atendimento"], a["hora_inicio"])
-                        with cicon:
-                            whatsapp_icon(link, size=22)
-
-                        if edit:
+                        if editar:
                             modal_editar(a)
-                        if delete:
+                        if excluir:
                             if st.session_state.get(f"confirm_ag_{a['id']}") != True:
                                 st.session_state[f"confirm_ag_{a['id']}"] = True
                                 st.warning("Clique novamente para confirmar.")
@@ -413,8 +470,6 @@ def render():
         st.subheader("Disponibilidade por Período")
 
         hoje = date.today()
-
-        # Defaults do profissional
         j_ini_default = _as_time(profissional, "hora_inicio_jornada", time(8, 0))
         j_fim_default = _as_time(profissional, "hora_fim_jornada", time(18, 0))
         alm_ini_default = _as_time(profissional, "almoco_inicio", None)
@@ -442,7 +497,6 @@ def render():
         with c7:
             cap_sim = st.number_input("Capacidade Simultânea", min_value=1, step=1, value=cap_default)
 
-        # Almoço opcional (toggle para evitar None em time_input)
         use_lunch = (alm_ini_default is not None and alm_fim_default is not None)
         use_lunch = st.toggle("Considerar intervalo de almoço?", value=use_lunch, help="Ative para bloquear slots no horário do almoço.")
         if use_lunch:
@@ -454,7 +508,6 @@ def render():
         else:
             almoco_inicio, almoco_fim = None, None
 
-        # Validações (inclui trava dt_ini >= hoje)
         if dt_ini < hoje:
             st.warning("Ajustei a data inicial para hoje, pois não é permitido período anterior à data atual.")
             dt_ini = hoje
@@ -473,7 +526,6 @@ def render():
             st.error("O fim do almoço deve ser maior que o início.")
             st.stop()
 
-        # Monta grade de disponibilidade
         df = _build_grade_disponibilidade(
             dados_agenda=dados,
             prof=profissional or {},
@@ -491,7 +543,6 @@ def render():
         )
 
         if not df.empty:
-            # --- KPIs gerais ---
             total_slots = len(df)
             livres = int((df["Situação"] == "Disponível").sum())
             ocupados = total_slots - livres
@@ -500,7 +551,6 @@ def render():
             r2.metric("Disponíveis", livres)
             r3.metric("Ocupados", ocupados)
 
-            # --- Tabela detalhada com cores ---
             def _color_row(row):
                 return (["background-color: #ffe5e5"] * len(row)) if row["Situação"] == "Ocupado" else (["background-color: #eaffea"] * len(row))
 
@@ -512,7 +562,6 @@ def render():
 
             st.divider()
 
-            # --- Resumo por dia ---
             st.markdown("#### Resumo por dia")
             resumo = (
                 df.groupby("Data", as_index=False)
@@ -524,22 +573,15 @@ def render():
             )
             resumo["taxa_ocupacao_%"] = (resumo["ocupados"] / resumo["total_slots"] * 100).round(1)
 
-            st.dataframe(
-                resumo,
-                use_container_width=True,
-                hide_index=True,
-            )
+            st.dataframe(resumo, use_container_width=True, hide_index=True)
 
-            # --- Gráfico de ocupação por dia (barras) ---
             st.markdown("#### Gráfico: Ocupação por dia (%)")
             chart_df = resumo[["Data", "taxa_ocupacao_%"]].set_index("Data")
             st.bar_chart(chart_df, use_container_width=True)
 
-            # --- Exportar CSVs ---
             cexp1, cexp2 = st.columns(2)
             _ini_str = dt_ini.strftime("%Y%m%d")
             _fim_str = dt_fim.strftime("%Y%m%d")
-
             csv_full = df.to_csv(index=False).encode("utf-8-sig")
             cexp1.download_button(
                 "⬇️ Baixar disponibilidade (CSV)",
@@ -548,7 +590,6 @@ def render():
                 mime="text/csv",
                 use_container_width=True,
             )
-
             csv_resumo = resumo.to_csv(index=False).encode("utf-8-sig")
             cexp2.download_button(
                 "⬇️ Baixar resumo por dia (CSV)",
