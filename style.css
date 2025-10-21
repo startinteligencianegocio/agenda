@@ -238,13 +238,11 @@ ul[role="listbox"] li a{ border-radius: 10px!important; }
 /* -----------------------------
    Login Page (centralizado)
 ------------------------------ */
-.page-container{ min-height: calc(100vh - 40px); display: flex; align-items: center; }
-.auth-card{
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  padding: 22px;
-  box-shadow: 0 10px 26px rgba(16,24,40,.08);
+.page-container{
+  min-height: calc(100vh - 40px);
+  display: flex;
+  align-items: flex-start;   /* sai do centro vertical */
+  padding-top: 6vh;          /* respiro do topo */
 }
 .titulo-app{
   margin: 10px 0 0 0;
