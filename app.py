@@ -4,12 +4,12 @@ import streamlit as st
 from streamlit_option_menu import option_menu
 from auth import validar_login
 
-# -------------------------------------------------
-# Config
-# -------------------------------------------------
+# =========================
+# Configuração inicial
+# =========================
 st.set_page_config(page_title="Agenda Profissional", page_icon="📅", layout="wide")
 
-# Oculta cabeçalho/rodapé nativos do Streamlit
+# Oculta elementos nativos do Streamlit
 st.markdown(
     """
     <style>
@@ -21,9 +21,9 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# -------------------------------------------------
-# CSS global (carrega style.css se existir)
-# -------------------------------------------------
+# =========================
+# CSS global (carrega style.css caso exista)
+# =========================
 def inject_global_css(path: str = "style.css"):
     p = Path(path)
     if not p.exists():
@@ -36,27 +36,41 @@ def inject_global_css(path: str = "style.css"):
 
 inject_global_css()
 
-# -------------------------------------------------
-# Estado inicial / DEBUG
-# -------------------------------------------------
+# =========================
+# Estado & utilidades
+# =========================
 if "user" not in st.session_state:
     st.session_state.user = None
 
-DEBUG_QP = st.query_params.get("debug", ["0"]) if hasattr(st, "query_params") else ["0"]
-DEBUG = (DEBUG_QP[0] if isinstance(DEBUG_QP, list) else DEBUG_QP) in ("1", "true", "True")
+def _get_debug_flag() -> bool:
+    # Compatível com versões antigas e novas do Streamlit
+    qp = {}
+    try:
+        qp = st.query_params  # Streamlit 1.32+
+    except Exception:
+        try:
+            qp = st.experimental_get_query_params()  # versões anteriores
+        except Exception:
+            qp = {}
+    dbg = qp.get("debug", ["0"])
+    dbg = dbg[0] if isinstance(dbg, list) else dbg
+    return str(dbg).lower() in ("1", "true", "yes", "on")
 
-# -------------------------------------------------
-# Tela de Login (clean + centralizado)
-# -------------------------------------------------
+DEBUG = _get_debug_flag()
+
+# =========================
+# Tela de Login
+# =========================
 def tela_login():
     st.markdown("<div class='page-container'>", unsafe_allow_html=True)
 
     _, center, _ = st.columns([1, 1.1, 1])
     with center:
         st.markdown("<div class='auth-card'>", unsafe_allow_html=True)
+
         c1, c2 = st.columns([1, 3])
         with c1:
-            st.image("start.png", width=120)
+            st.image("start.png", use_container_width=True)
         with c2:
             st.markdown(
                 "<h1 class='titulo-app'>Agenda Profissional</h1>"
@@ -83,20 +97,18 @@ def tela_login():
             return
         if u:
             st.session_state.user = u
-            if DEBUG:
-                st.write({"user": u})
             st.rerun()
         else:
             st.error("Credenciais inválidas, inativas ou licença expirada.")
 
-# -------------------------------------------------
-# Sidebar com menu e cabeçalho
-# -------------------------------------------------
+# =========================
+# Sidebar (menu lateral)
+# =========================
 def sidebar_menu(is_admin: bool) -> str:
     with st.sidebar:
-        # Cabeçalho da sidebar
+        # Cabeçalho visual
         st.markdown("<div class='sidebar-header'>", unsafe_allow_html=True)
-        st.image("start.png", use_column_width=True)
+        st.image("start.png", use_container_width=True)  # sem deprecation
         st.markdown("<div class='brand-title'>Agenda Profissional</div>", unsafe_allow_html=True)
 
         u = st.session_state.user or {}
@@ -108,7 +120,7 @@ def sidebar_menu(is_admin: bool) -> str:
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
-        # Menu lateral
+        # Opções do menu
         options = [
             "Dashboard",
             "Clientes",
@@ -141,22 +153,20 @@ def sidebar_menu(is_admin: bool) -> str:
                     "font-size": "16px",
                     "text-align": "left",
                     "margin": "2px 0",
-                    "--hover-color": "var(--menu-hover)",
+                    "--hover-color": "#dff7ef",      # hover verdinho
+                    "transition": "background 120ms ease"
                 },
                 "nav-link-selected": {
-                    "background-color": "var(--primary)",
+                    "background-color": "#1e8f6c",   # destaque mais forte
                     "color": "white",
+                    "font-weight": "700",
+                    "box-shadow": "0 2px 8px rgba(0,0,0,.12)"
                 },
             },
         )
 
-        # Botão sair fixo no rodapé da sidebar
         st.markdown(
-            """
-            <div class='sidebar-footer'>
-              <small>© Start Inteligência de Negócios</small>
-            </div>
-            """,
+            "<div class='sidebar-footer'><small>© Start Inteligência de Negócios</small></div>",
             unsafe_allow_html=True,
         )
         if st.button("Sair", use_container_width=True):
@@ -165,9 +175,9 @@ def sidebar_menu(is_admin: bool) -> str:
 
         return selected
 
-# -------------------------------------------------
-# Render de páginas
-# -------------------------------------------------
+# =========================
+# Renderização de páginas
+# =========================
 def _render_page(modname: str):
     try:
         page = __import__(modname)
@@ -183,9 +193,9 @@ def _render_page(modname: str):
         if DEBUG:
             st.exception(e)
 
-# -------------------------------------------------
+# =========================
 # Main
-# -------------------------------------------------
+# =========================
 def main():
     if not st.session_state.user:
         tela_login()
@@ -194,7 +204,7 @@ def main():
     u = st.session_state.user
     selected = sidebar_menu(u.get("is_admin", False))
 
-    # wrapper visual do conteúdo
+    # Wrapper visual do conteúdo
     st.markdown("<div class='content-wrapper'>", unsafe_allow_html=True)
 
     pages = {

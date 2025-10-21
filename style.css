@@ -1,6 +1,92 @@
 /* =========================================================
-   STREAMLIT 1.50 — BUTTON COLORS
+   START INTELIGÊNCIA — THEME FOR STREAMLIT 1.50+
+   Visual unificado para Agenda Profissional
    ========================================================= */
+
+/* -----------------------------
+   Paleta & Tokens
+------------------------------ */
+:root{
+  --primary:#28B78D;
+  --primary-700:#1e8f6c;
+  --bg:#f6f7fb;
+  --card:#ffffff;
+  --muted:#6b7280;
+  --menu-hover:#e9f8f2;
+  --border:#e5e7eb;
+  --danger:#ef4444;
+  --warning:#f59e0b;
+  --success:#10b981;
+}
+
+/* -----------------------------
+   Base / Layout
+------------------------------ */
+body{ background: var(--bg); }
+.block-container{ padding-top: 1.2rem; }
+
+/* Wrapper de conteúdo principal (aplique via app.py) */
+.content-wrapper{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 22px 22px 8px;
+  box-shadow: 0 6px 22px rgba(16,24,40,.06);
+}
+
+/* Títulos / espaçamento */
+h2, .stMarkdown h2 { margin-top: 0; }
+.muted{ color: var(--muted); }
+
+/* Tabelas com cantos suaves */
+table{ border-radius: 10px; overflow: hidden; }
+
+/* -----------------------------
+   Sidebar Brand + User
+------------------------------ */
+[data-testid="stSidebar"] > div{ padding: 12px 14px; }
+
+.sidebar-header{
+  background: linear-gradient(135deg, var(--primary), #33c6a0);
+  padding: 18px 14px 14px;
+  border-radius: 14px;
+  color: #fff;
+  margin-bottom: 10px;
+  box-shadow: 0 6px 18px rgba(40,183,141,.35);
+}
+.sidebar-header img{ border-radius: 10px; margin-bottom: 10px; }
+.brand-title{ font-weight: 700; font-size: 18px; margin-bottom: 8px; }
+
+.user-chip{
+  background: rgba(255,255,255,.16);
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 13px;
+  display: inline-block;
+}
+.sidebar-footer{
+  margin-top: 10px;
+  color:#fff;
+  background: var(--primary);
+  border-radius: 12px;
+  padding: 8px 10px;
+  text-align:center;
+}
+
+/* -----------------------------
+   Option Menu / Tabs
+------------------------------ */
+ul[role="listbox"] li:hover{ border-radius: 10px; }
+ul[role="listbox"] li a{ border-radius: 10px!important; }
+
+/* redução leve da fonte para evitar quebra (mantém sua regra) */
+.nav-link, .stTabs [data-baseweb="tab-list"] button {
+  font-size: 18px !important;
+}
+
+/* -----------------------------
+   Botões (Streamlit 1.50)
+------------------------------ */
 
 /* Primary (form submit "Incluir") — cobre st.form_submit_button e base primary */
 .stApp [data-testid="baseButton-primary"],
@@ -42,7 +128,7 @@
 .stApp button:active { filter: brightness(0.98); transform: translateY(0); }
 .stApp button:disabled { filter: grayscale(0.2) brightness(0.9) !important; opacity: .85 !important; }
 
-/* Right-aligned actions row for lists */
+/* Linha de ações alinhada à direita (listas/tabelas) */
 .actions-right {
   display: flex;
   justify-content: flex-end;
@@ -53,9 +139,47 @@
 .actions-right .stButton { display: inline-block; margin: 0 !important; }
 .actions-right button { min-width: 92px; }
 
-/* =========================================================
-   KPI CARDS
-   ========================================================= */
+/* -----------------------------
+   Botões utilitários (Kanban/Links)
+------------------------------ */
+.btn{
+  display:inline-block; padding:8px 12px; border-radius:10px; border:1px solid var(--border);
+  text-decoration:none; font-size:13px; cursor:pointer; background:#fff; color:#111;
+}
+.btn:hover{ border-color: var(--primary); }
+.btn-primary{ background: var(--primary); color:#fff; border-color: transparent; }
+.btn-danger{ background: var(--danger); color:#fff; border-color: transparent; }
+
+/* WhatsApp maior */
+.btn-whatsapp{ padding:10px 14px; font-weight:700; border-radius:12px; }
+.btn-whatsapp-large{ padding:12px 18px; font-size:15px; }
+
+/* Ícones/botões compactos */
+.icon-button, .icon-only {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 8px !important;
+}
+
+/* -----------------------------
+   Inputs / Formularios
+------------------------------ */
+.stApp input, .stApp textarea, .stApp select {
+  border-radius: 8px !important;
+}
+.stApp .stContainer .stButton > button { margin-right: 6px; }
+
+/* -----------------------------
+   KPIs
+------------------------------ */
+
+/* Grid auxiliar (use sem substituir sua lógica) */
+.kpi-grid{ display:grid; grid-template-columns: repeat(4,1fr); gap:14px; }
+@media (max-width:1200px){ .kpi-grid{ grid-template-columns: repeat(2,1fr); } }
+@media (max-width:640px){ .kpi-grid{ grid-template-columns: 1fr; } }
+
+/* Mantém sua assinatura visual de KPI */
 .kpi-row { margin-top: .5rem; margin-bottom: 1rem; }
 
 .kpi-card {
@@ -70,7 +194,7 @@
   flex-direction: column;
   justify-content: center;
 
-  /* >>> espaço entre cards quando empilhados (mobile) <<< */
+  /* espaço entre cards quando empilhados (mobile) */
   margin-bottom: 12px;
 }
 
@@ -90,44 +214,61 @@
   text-shadow: 0 1px 1px rgba(0,0,0,0.25);
 }
 
-/* Em telas menores, aumenta um pouco o respiro e ajusta padding */
+/* Em telas menores, ajusta padding dos cards */
 @media (max-width: 768px){
   .kpi-card { margin-bottom: 16px; padding: 16px 18px; }
 }
 
-/* =========================================================
-   TITLES & KANBAN
-   ========================================================= */
+/* -----------------------------
+   Kanban / Status
+------------------------------ */
 .kanban-title { font-weight: 600; margin-bottom: 0.5rem; }
 
-/* =========================================================
-   MENU / TABS — redução leve da fonte para evitar quebra
-   ========================================================= */
-.nav-link, .stTabs [data-baseweb="tab-list"] button {
-  font-size: 18px !important;
+.kanban-actions{
+  display:flex; gap:8px; flex-wrap:wrap; align-items:center;
 }
 
-/* =========================================================
-   HEADERS SPACING
-   ========================================================= */
-h2, .stMarkdown h2 { margin-top: 0; }
+.status-pill{
+  padding:4px 10px; border-radius:999px; font-size:12px; font-weight:600; display:inline-block;
+}
+.pill-ok{ background:#d1fae5; color:#065f46; }
+.pill-pend{ background:#fef3c7; color:#92400e; }
+.pill-cancel{ background:#fee2e2; color:#991b1b; }
 
-/* =========================================================
-   FORM & LAYOUT FINESSE
-   ========================================================= */
-
-/* Evita estoura de largura de ícones/botões compactos (ex.: WhatsApp) */
-.icon-button, .icon-only {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px 8px !important;
+/* -----------------------------
+   Login Page (centralizado)
+------------------------------ */
+.page-container{ min-height: calc(100vh - 40px); display: flex; align-items: center; }
+.auth-card{
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 22px;
+  box-shadow: 0 10px 26px rgba(16,24,40,.08);
+}
+.titulo-app{
+  margin: 10px 0 0 0;
+  font-size: 28px;
+  line-height: 1.1;
 }
 
-/* Ajuste suave nos inputs em temas escuros */
-.stApp input, .stApp textarea, .stApp select {
-  border-radius: 8px !important;
+/* -----------------------------
+   Ajustes finos diversos
+------------------------------ */
+/* Evita overflow do option-menu */
+ul[role="listbox"] { padding-left: 0; }
+
+/* Harmoniza sombras das seções/tabelas */
+.stDataFrame, .stTable, .element-container:has(.stDataFrame){
+  border-radius: 12px;
+  box-shadow: 0 6px 16px rgba(16,24,40,.05);
 }
 
-/* Alinhamento melhor nos grupos de botões dentro de containers */
-.stApp .stContainer .stButton > button { margin-right: 6px; }
+/* Links dentro de cards */
+.content-wrapper a{ text-decoration: none; }
+.content-wrapper a:hover{ text-decoration: underline; }
+
+ul[role="listbox"] li a:hover{
+  transform: translateX(2px);
+  border-radius: 10px !important;
+}

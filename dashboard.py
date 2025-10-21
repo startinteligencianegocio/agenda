@@ -1,10 +1,8 @@
 # dashboard.py
 import streamlit as st
 import pandas as pd
-from datetime import date, datetime
+from datetime import date
 from calendar import month_name
-
-# Funções de banco (ajuste conforme seu módulo/database)
 from database import listar_registros
 
 TAB_AGENDA = "ag_agenda"
@@ -12,7 +10,7 @@ TAB_PROFISSIONAIS = "ag_profissionais"
 TAB_TIPOS = "ag_tipos_servicos"
 
 # -----------------------------
-# Utilidades
+# Utils
 # -----------------------------
 def _try_numeric(s):
     try:
@@ -20,16 +18,10 @@ def _try_numeric(s):
     except Exception:
         return pd.Series([None] * len(s))
 
-def _fmt_brl(v: float | int | None) -> str:
+def _fmt_brl(v):
     if v is None:
         v = 0.0
     return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-
-def _safe_series(df: pd.DataFrame, candidates: list[str], default=None):
-    for c in candidates:
-        if c in df.columns:
-            return df[c]
-    return pd.Series([default] * len(df))
 
 def _load_df(tabela: str) -> pd.DataFrame:
     try:
@@ -37,20 +29,17 @@ def _load_df(tabela: str) -> pd.DataFrame:
         return pd.DataFrame(rows) if rows else pd.DataFrame()
     except Exception as e:
         st.warning(f"Não foi possível carregar registros de {tabela}.")
-        if st.session_state.get("DEBUG"):
-            st.exception(e)
+        if st.session_state.get("DEBUG"): st.exception(e)
         return pd.DataFrame()
 
 # -----------------------------
-# Normalização da Agenda
+# Normalização
 # -----------------------------
 def _load_agenda_norm() -> pd.DataFrame:
     df = _load_df(TAB_AGENDA)
-
     if df.empty:
         return df
 
-    # Mapeia possíveis nomes de colunas
     data_col = next((c for c in df.columns if c.lower() in ("data","data_agenda","dt_agenda","dia")), None)
     hora_col = next((c for c in df.columns if "hora" in c.lower() and ("ini" in c.lower() or "início" in c.lower() or "inicio" in c.lower())), None)
     status_col = next((c for c in df.columns if c.lower() == "status"), None)
@@ -58,82 +47,60 @@ def _load_agenda_norm() -> pd.DataFrame:
     prof_id_col = next((c for c in df.columns if "prof" in c.lower() and "id" in c.lower()), None)
     tipo_id_col = next((c for c in df.columns if "tipo" in c.lower() and "id" in c.lower()), None)
 
-    # Datas/horas/status/valor
-    if data_col:
-        df["__data__"] = pd.to_datetime(df[data_col], errors="coerce").dt.date
-    else:
-        df["__data__"] = pd.NaT
+    df["__data__"] = pd.to_datetime(df[data_col], errors="coerce").dt.date if data_col else pd.NaT
+    df["__hora__"] = pd.to_datetime(df[hora_col], errors="coerce").dt.time if hora_col else None
+    df["__status__"] = df[status_col].astype(str).str.upper() if status_col else "PENDENTE"
+    df["__valor__"] = _try_numeric(df[valor_col]).fillna(0.0) if valor_col else 0.0
 
-    if hora_col:
-        df["__hora__"] = pd.to_datetime(df[hora_col], errors="coerce").dt.time
-    else:
-        df["__hora__"] = None
-
-    if status_col:
-        df["__status__"] = df[status_col].astype(str).str.upper()
-    else:
-        df["__status__"] = "PENDENTE"
-
-    if valor_col:
-        df["__valor__"] = _try_numeric(df[valor_col]).fillna(0.0)
-    else:
-        df["__valor__"] = 0.0
-
-    # Join com profissionais (nome)
+    # Join profissionais
     dfp = _load_df(TAB_PROFISSIONAIS)
     if not dfp.empty and prof_id_col:
         prof_id = next((c for c in dfp.columns if c.lower() in ("id","prof_id","cod_profissional","codigo")), None)
         prof_nome = next((c for c in dfp.columns if c.lower() in ("nome","nome_prof","razao_social","profissional")), None)
         if prof_id and prof_nome:
-            df = df.merge(dfp[[prof_id, prof_nome]], left_on=prof_id_col, right_on=prof_id, how="left", suffixes=("","_p"))
+            df = df.merge(dfp[[prof_id, prof_nome]], left_on=prof_id_col, right_on=prof_id, how="left")
             df.rename(columns={prof_nome: "__prof__"}, inplace=True)
         else:
             df["__prof__"] = None
     else:
         df["__prof__"] = None
 
-    # Join com tipos de serviço (nome)
+    # Join tipos
     dft = _load_df(TAB_TIPOS)
     if not dft.empty and tipo_id_col:
         tipo_id = next((c for c in dft.columns if c.lower() in ("id","tipo_id","cod_tipo","codigo")), None)
         tipo_nome = next((c for c in dft.columns if c.lower() in ("nome","descricao","servico","título","titulo")), None)
         if tipo_id and tipo_nome:
-            df = df.merge(dft[[tipo_id, tipo_nome]], left_on=tipo_id_col, right_on=tipo_id, how="left", suffixes=("","_t"))
+            df = df.merge(dft[[tipo_id, tipo_nome]], left_on=tipo_id_col, right_on=tipo_id, how="left")
             df.rename(columns={tipo_nome: "__servico__"}, inplace=True)
         else:
             df["__servico__"] = None
     else:
         df["__servico__"] = None
 
-    # Índices auxiliares
-    df["__ano__"] = pd.Series([d.year if isinstance(d, date) else None for d in df["__data__"]])
-    df["__mes__"] = pd.Series([d.month if isinstance(d, date) else None for d in df["__data__"]])
-
+    df["__ano__"] = [d.year if isinstance(d, date) else None for d in df["__data__"]]
+    df["__mes__"] = [d.month if isinstance(d, date) else None for d in df["__data__"]]
     return df
 
 # -----------------------------
-# Filtros de período
+# Filtros (uma única vez!)
 # -----------------------------
 def _filtros_periodo(df: pd.DataFrame):
     hoje = date.today()
-    anos = sorted([a for a in df["__ano__"].dropna().unique().tolist() if a], reverse=True) if not df.empty else [hoje.year]
-    ano_sel = st.selectbox("Ano", anos, index=0 if hoje.year in anos else 0)
+    anos = sorted([int(a) for a in df["__ano__"].dropna().unique().tolist()], reverse=True) if not df.empty else [hoje.year]
+    if not anos: anos = [hoje.year]
+    ano_sel = st.selectbox("Ano", anos, index=0)
 
-    meses_opts = list(range(1,13))
-    try:
-        labels = [f"{m:02d} - {month_name[m].capitalize()}" for m in meses_opts]
-    except Exception:
-        labels = [f"{m:02d}" for m in meses_opts]
-    # preseleciona mês atual se houver dados; senão, primeiro item
-    idx_mes = (hoje.month-1) if hoje.year == ano_sel else 0
-    mes_sel = st.selectbox("Mês", meses_opts, format_func=lambda m: labels[m-1], index=idx_mes)
+    meses = list(range(1, 12 + 1))
+    labels = [f"{m:02d} - {month_name[m].capitalize()}" for m in meses]
+    idx_mes = (hoje.month - 1) if ano_sel == hoje.year else 0
+    mes_sel = st.selectbox("Mês", meses, format_func=lambda m: labels[m-1], index=idx_mes)
     return ano_sel, mes_sel
 
 def _aplicar_periodo(df: pd.DataFrame, ano: int, mes: int) -> pd.DataFrame:
     if df.empty:
         return df
-    filt = (df["__ano__"] == ano) & (df["__mes__"] == mes)
-    return df.loc[filt].copy()
+    return df[(df["__ano__"] == ano) & (df["__mes__"] == mes)].copy()
 
 # -----------------------------
 # KPIs
@@ -151,22 +118,10 @@ def _kpi(label: str, value: str):
 
 def _area_kpis(df_mes: pd.DataFrame, ano: int, mes: int):
     ref = f"{ano}/{str(mes).zfill(2)}"
-    if df_mes.empty:
-        st.markdown("### 🏷️ Resumo do mês")
-        st.markdown("<div class='kpi-grid'>", unsafe_allow_html=True)
-        _kpi("Atendimentos", f"0 · {ref}")
-        _kpi("Confirmados", f"0 · {ref}")
-        _kpi("Cancelados", f"0 · {ref}")
-        _kpi("Ticket Médio", f"R$ 0,00 · {ref}")
-        st.markdown("</div>", unsafe_allow_html=True)
-        return
-
     total = len(df_mes)
-    confirmados = int((df_mes["__status__"] == "CONFIRMADO").sum())
-    cancelados = int((df_mes["__status__"] == "CANCELADO").sum())
-
-    # Ticket médio: soma de valores de CONFIRMADO / quantidade confirmados
-    soma_confirmados = float(df_mes.loc[df_mes["__status__"] == "CONFIRMADO", "__valor__"].sum())
+    confirmados = int((df_mes["__status__"] == "CONFIRMADO").sum()) if not df_mes.empty else 0
+    cancelados = int((df_mes["__status__"] == "CANCELADO").sum()) if not df_mes.empty else 0
+    soma_confirmados = float(df_mes.loc[df_mes["__status__"] == "CONFIRMADO", "__valor__"].sum()) if not df_mes.empty else 0.0
     ticket_medio = (soma_confirmados / confirmados) if confirmados > 0 else 0.0
 
     st.markdown("### 🏷️ Resumo do mês")
@@ -178,15 +133,14 @@ def _area_kpis(df_mes: pd.DataFrame, ano: int, mes: int):
     st.markdown("</div>", unsafe_allow_html=True)
 
 # -----------------------------
-# Gráficos e Tabelas
+# Gráficos/Tabelas
 # -----------------------------
 def _evolucao_diaria(df_mes: pd.DataFrame):
     st.markdown("### 📈 Evolução diária (quantidade)")
     if df_mes.empty:
         st.caption("Sem dados no período selecionado.")
         return
-    serie = df_mes.groupby("__data__")["__status__"].count().rename("Qtde").reset_index().sort_values("__data__")
-    serie = serie.set_index("__data__")
+    serie = df_mes.groupby("__data__")["__status__"].count().rename("Qtde").reset_index().sort_values("__data__").set_index("__data__")
     st.line_chart(serie)
 
 def _distribuicao_status(df_mes: pd.DataFrame):
@@ -198,7 +152,7 @@ def _distribuicao_status(df_mes: pd.DataFrame):
     st.dataframe(dist, hide_index=True, use_container_width=True)
 
 def _top_profissionais(df_mes: pd.DataFrame, topn=5):
-    st.markdown("### 🧑‍🔧 Top Profissionais (por atendimentos confirmados)")
+    st.markdown("### 🧑‍🔧 Top Profissionais (confirmados)")
     if df_mes.empty or "__prof__" not in df_mes.columns:
         st.caption("Sem dados para profissionais.")
         return
@@ -210,7 +164,7 @@ def _top_profissionais(df_mes: pd.DataFrame, topn=5):
     st.bar_chart(top.set_index("Profissional"))
 
 def _top_servicos(df_mes: pd.DataFrame, topn=5):
-    st.markdown("### 💈 Top Serviços (por atendimentos confirmados)")
+    st.markdown("### 💈 Top Serviços (confirmados)")
     if df_mes.empty or "__servico__" not in df_mes.columns:
         st.caption("Sem dados para serviços.")
         return
@@ -226,8 +180,6 @@ def _tabela_detalhe(df_mes: pd.DataFrame):
     if df_mes.empty:
         st.caption("Sem dados no período selecionado.")
         return
-
-    # Monta tabela amigável
     show = pd.DataFrame({
         "Data": pd.to_datetime(df_mes["__data__"]).dt.strftime("%d/%m/%Y"),
         "Hora": df_mes["__hora__"].astype(str),
@@ -237,57 +189,43 @@ def _tabela_detalhe(df_mes: pd.DataFrame):
         "Valor": df_mes["__valor__"].map(_fmt_brl),
     })
     st.dataframe(show, hide_index=True, use_container_width=True)
-
-    # Exportador CSV
-    csv = show.to_csv(index=False).encode("utf-8")
     st.download_button(
         "Baixar CSV do mês",
-        data=csv,
+        data=show.to_csv(index=False).encode("utf-8"),
         file_name="dashboard_agenda_mes.csv",
         mime="text/csv",
         use_container_width=True,
     )
 
 # -----------------------------
-# Página
+# Page
 # -----------------------------
 def render():
     st.markdown("## 📊 Dashboard")
-
     df = _load_agenda_norm()
     if df.empty:
         st.info("Sem dados de agenda.")
         return
 
-    # Filtros (Ano/Mês)
-    col_a, col_m = st.columns([1, 1])
-    with col_a:
-        ano, _ = _filtros_periodo(df)
-    with col_m:
-        # como _filtros_periodo cria o select de mês, precisamos ler o valor criado ali.
-        # Porém, para manter controle claro, chamamos novamente para obter o mesmo mês escolhido.
-        # (Streamlit reusa o estado, então o resultado é igual.)
-        _, mes = _filtros_periodo(df)
+    # Filtros — uma única chamada
+    col1, col2 = st.columns(2)
+    with col1:
+        ano, mes = _filtros_periodo(df)
+    with col2:
+        st.empty()  # espaço de layout
 
-    # Aplica período
     df_mes = _aplicar_periodo(df, ano, mes)
 
-    # KPIs
     _area_kpis(df_mes, ano, mes)
 
-    # Layout de gráficos
     st.markdown("---")
     c1, c2 = st.columns(2)
-    with c1:
-        _evolucao_diaria(df_mes)
-    with c2:
-        _distribuicao_status(df_mes)
+    with c1: _evolucao_diaria(df_mes)
+    with c2: _distribuicao_status(df_mes)
 
     c3, c4 = st.columns(2)
-    with c3:
-        _top_profissionais(df_mes)
-    with c4:
-        _top_servicos(df_mes)
+    with c3: _top_profissionais(df_mes)
+    with c4: _top_servicos(df_mes)
 
     st.markdown("---")
     _tabela_detalhe(df_mes)
