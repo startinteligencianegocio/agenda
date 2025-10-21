@@ -1,13 +1,57 @@
-import streamlit as st
-import bcrypt
+import re
 from datetime import time
-from database import listar_registros, inserir_registro, atualizar_registro, excluir_registro
-from masklib import masked_text_input, PHONE_BR
+import bcrypt
+import streamlit as st
 
+from database import (
+    listar_registros,
+    inserir_registro,
+    atualizar_registro,
+    excluir_registro,
+)
+
+# ================================
+# Configurações locais do módulo
+# ================================
 TABELA = "ag_profissionais"
 FORM_NS = "prof_form_v"
 
+# ================================
+# Helpers de telefone BR (substitui masklib)
+# ================================
+PHONE_BR = r"^\(?\d{2}\)?\s?\d{4,5}-?\d{4}$"
 
+def _format_phone_br(raw: str) -> str:
+    d = re.sub(r"\D", "", raw or "")
+    if len(d) >= 11:   # (99) 99999-9999
+        return f"({d[0:2]}) {d[2:7]}-{d[7:11]}"
+    elif len(d) >= 10: # (99) 9999-9999
+        return f"({d[0:2]}) {d[2:6]}-{d[6:10]}"
+    return raw or ""
+
+def masked_text_input(
+    label: str,
+    key: str,
+    mask: str = PHONE_BR,
+    value: str = "",
+    in_form: bool = False
+) -> str:
+    """
+    Mantém a assinatura usada no seu código:
+      masked_text_input("Telefone", key=..., mask=PHONE_BR, value=..., in_form=True)
+    Retorna o número formatado e mostra um feedback visual simples.
+    """
+    raw = st.text_input(label, value=value, key=key, max_chars=16)
+    fmt = _format_phone_br(raw)
+    if raw:
+        ok = re.match(PHONE_BR, fmt) is not None
+        st.caption("Formato válido ✅" if ok else "Telefone inválido ❌. Ex.: (19) 99999-9999")
+    return fmt
+
+
+# ================================
+# UI Helpers
+# ================================
 def _header():
     col_logo, col_title = st.columns([1, 6])
     with col_logo:
@@ -15,16 +59,13 @@ def _header():
     with col_title:
         st.markdown("<h2>Profissionais</h2>", unsafe_allow_html=True)
 
-
 def _v() -> int:
     if FORM_NS not in st.session_state:
         st.session_state[FORM_NS] = 0
     return st.session_state[FORM_NS]
 
-
 def _k(name: str) -> str:
     return f"{FORM_NS}_{name}_{_v()}"
-
 
 def _dias_semana_to_str(dias: list[str]) -> str:
     """
@@ -32,7 +73,6 @@ def _dias_semana_to_str(dias: list[str]) -> str:
     """
     mapa = {"Seg": "1", "Ter": "2", "Qua": "3", "Qui": "4", "Sex": "5", "Sáb": "6", "Dom": "7"}
     return ",".join(mapa[d] for d in dias if d in mapa)
-
 
 def _dias_semana_from_str(val: str) -> list[str]:
     """
@@ -49,6 +89,9 @@ def _dias_semana_from_str(val: str) -> list[str]:
     return out
 
 
+# ================================
+# Diálogo de edição
+# ================================
 @st.dialog("Editar Profissional")
 def modal_editar(item: dict):
     with st.form(f"form_edit_prof_{item['id']}", border=True):
@@ -57,8 +100,11 @@ def modal_editar(item: dict):
         with c1:
             nome = st.text_input("Nome", value=item.get("nome", ""))
             telefone = masked_text_input(
-                "Telefone", key=f"tel_prof_edit_{item['id']}", mask=PHONE_BR,
-                value=item.get("telefone", ""), in_form=True
+                "Telefone",
+                key=f"tel_prof_edit_{item['id']}",
+                mask=PHONE_BR,
+                value=item.get("telefone", ""),
+                in_form=True
             )
         with c2:
             email = st.text_input("Email", value=item.get("email", ""))
@@ -84,17 +130,22 @@ def modal_editar(item: dict):
             almoco_inicio = st.time_input("Almoço (início)", value=_safe_time(item.get("almoco_inicio"), None))
             almoco_fim = st.time_input("Almoço (fim)", value=_safe_time(item.get("almoco_fim"), None))
         with c7:
-            slot_minutos = st.number_input("Duração do slot (min)", min_value=5, step=5,
-                                           value=int(item.get("slot_minutos") or 30))
-            buffer_minutos = st.number_input("Buffer entre atend. (min)", min_value=0, step=5,
-                                             value=int(item.get("buffer_minutos") or 0))
+            slot_minutos = st.number_input(
+                "Duração do slot (min)", min_value=5, step=5, value=int(item.get("slot_minutos") or 30)
+            )
+            buffer_minutos = st.number_input(
+                "Buffer entre atend. (min)", min_value=0, step=5, value=int(item.get("buffer_minutos") or 0)
+            )
 
         c8, c9, c10 = st.columns(3)
         with c8:
-            considerar_feriados = st.checkbox("Considerar feriados (BR)", value=bool(item.get("considerar_feriados", False)))
+            considerar_feriados = st.checkbox(
+                "Considerar feriados (BR)", value=bool(item.get("considerar_feriados", False))
+            )
         with c9:
-            capacidade_simultanea = st.number_input("Capacidade simultânea", min_value=1, step=1,
-                                                    value=int(item.get("capacidade_simultanea") or 1))
+            capacidade_simultanea = st.number_input(
+                "Capacidade simultânea", min_value=1, step=1, value=int(item.get("capacidade_simultanea") or 1)
+            )
         with c10:
             dias_semana_labels = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"]
             dias_semana = st.multiselect(
@@ -146,6 +197,9 @@ def modal_editar(item: dict):
         st.rerun()
 
 
+# ================================
+# Utilidades
+# ================================
 def _safe_time(val, default: time | None) -> time | None:
     """
     Converte 'HH:MM'/'HH:MM:SS' -> time; retorna default se None/''.
@@ -162,6 +216,9 @@ def _safe_time(val, default: time | None) -> time | None:
         return default
 
 
+# ================================
+# Página principal
+# ================================
 def render():
     u = st.session_state.get("user", {})
     if not u.get("is_admin"):
