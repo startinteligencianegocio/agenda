@@ -1,194 +1,293 @@
 # dashboard.py
 import streamlit as st
-from datetime import date, timedelta
-from database import supabase  # usa o SDK já configurado no seu database.py
+import pandas as pd
+from datetime import date, datetime
+from calendar import month_name
 
-TITLE = "Agenda Profissional"
+# Funções de banco (ajuste conforme seu módulo/database)
+from database import listar_registros
 
-def _header():
-    col_logo, col_title = st.columns([1,6])
-    with col_logo:
-        st.image("start.png", width=160)
-    with col_title:
-        st.markdown(f"<h2 style='margin:0'>{TITLE}</h2>", unsafe_allow_html=True)
+TAB_AGENDA = "ag_agenda"
+TAB_PROFISSIONAIS = "ag_profissionais"
+TAB_TIPOS = "ag_tipos_servicos"
 
-def _inject_css():
-    # tenta carregar style.css global (se existir) + garante CSS mínimo dos KPIs
-    css = ""
+# -----------------------------
+# Utilidades
+# -----------------------------
+def _try_numeric(s):
     try:
-        with open("style.css", "r", encoding="utf-8") as f:
-            css = f.read()
+        return pd.to_numeric(s, errors="coerce")
     except Exception:
-        pass
+        return pd.Series([None] * len(s))
 
-    extra = """
-    /* KPI cards */
-    .kpi-row { margin-top: .5rem; margin-bottom: 1rem; }
-    .kpi-card{
-        background: linear-gradient(135deg, #28B78D 0%, #243743 60%, #A1A9AE 100%);
-        border-radius: 16px;
-        padding: 18px 20px;
-        color: #fff;
-        box-shadow: 0 4px 16px rgba(0,0,0,.18);
-        border: 1px solid rgba(255,255,255,.08);
-        min-height: 96px;
-        display:flex;
-        flex-direction: column;
-        justify-content: center;
-    }
-    .kpi-value{
-        font-size: 32px;
-        line-height: 1;
-        font-weight: 800;
-        margin-bottom: 6px;
-        text-shadow: 0 1px 2px rgba(0,0,0,.35);
-    }
-    .kpi-label{
-        font-size: 14px;
-        opacity: .95;
-        font-weight: 500;
-        letter-spacing: .2px;
-        text-shadow: 0 1px 1px rgba(0,0,0,.25);
-    }
-    """
-    st.markdown(f"<style>{css}\n{extra}</style>", unsafe_allow_html=True)
+def _fmt_brl(v: float | int | None) -> str:
+    if v is None:
+        v = 0.0
+    return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-def _count_exact(q):
-    """
-    Retorna count de uma consulta Supabase com select(..., count='exact').
-    Compatível com versões que expõem .count ou que só retornam data.
-    """
+def _safe_series(df: pd.DataFrame, candidates: list[str], default=None):
+    for c in candidates:
+        if c in df.columns:
+            return df[c]
+    return pd.Series([default] * len(df))
+
+def _load_df(tabela: str) -> pd.DataFrame:
     try:
-        resp = q.execute()
-        if hasattr(resp, "count") and resp.count is not None:
-            return int(resp.count)
-        if hasattr(resp, "data") and resp.data is not None:
-            return len(resp.data)
-        return 0
+        rows = listar_registros(tabela, {})
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
     except Exception as e:
-        st.warning(f"Falha ao contar: {e}")
-        return 0
+        st.warning(f"Não foi possível carregar registros de {tabela}.")
+        if st.session_state.get("DEBUG"):
+            st.exception(e)
+        return pd.DataFrame()
 
-def _contagens_basicas(prof_id: str):
-    """
-    a) Atendimentos do dia
-    b) Atendimentos do mês anterior (inteiro)
-    c) Atendimentos no mês atual até ontem
-    d) Total do mês (a + c)
-    """
-    hoje = date.today()
-    ontem = hoje - timedelta(days=1)
-    primeiro_mes = hoje.replace(day=1)
+# -----------------------------
+# Normalização da Agenda
+# -----------------------------
+def _load_agenda_norm() -> pd.DataFrame:
+    df = _load_df(TAB_AGENDA)
 
-    # mês anterior (intervalo completo)
-    ultimo_mes_anterior = primeiro_mes - timedelta(days=1)
-    primeiro_mes_anterior = ultimo_mes_anterior.replace(day=1)
+    if df.empty:
+        return df
 
-    # a) dia
-    q_dia = _count_exact(
-        supabase.table("ag_agenda")
-        .select("id", count="exact")
-        .eq("profissional_id", prof_id)
-        .eq("data_atendimento", str(hoje))
-    )
+    # Mapeia possíveis nomes de colunas
+    data_col = next((c for c in df.columns if c.lower() in ("data","data_agenda","dt_agenda","dia")), None)
+    hora_col = next((c for c in df.columns if "hora" in c.lower() and ("ini" in c.lower() or "início" in c.lower() or "inicio" in c.lower())), None)
+    status_col = next((c for c in df.columns if c.lower() == "status"), None)
+    valor_col = next((c for c in df.columns if any(x in c.lower() for x in ("valor","preco","preço","total"))), None)
+    prof_id_col = next((c for c in df.columns if "prof" in c.lower() and "id" in c.lower()), None)
+    tipo_id_col = next((c for c in df.columns if "tipo" in c.lower() and "id" in c.lower()), None)
 
-    # b) mês anterior
-    q_mes_ant = _count_exact(
-        supabase.table("ag_agenda")
-        .select("id", count="exact")
-        .eq("profissional_id", prof_id)
-        .gte("data_atendimento", str(primeiro_mes_anterior))
-        .lte("data_atendimento", str(ultimo_mes_anterior))
-    )
-
-    # c) mês atual até ontem
-    if hoje.day == 1:
-        q_mes_ate_ontem = 0
+    # Datas/horas/status/valor
+    if data_col:
+        df["__data__"] = pd.to_datetime(df[data_col], errors="coerce").dt.date
     else:
-        q_mes_ate_ontem = _count_exact(
-            supabase.table("ag_agenda")
-            .select("id", count="exact")
-            .eq("profissional_id", prof_id)
-            .gte("data_atendimento", str(primeiro_mes))
-            .lte("data_atendimento", str(ontem))
-        )
+        df["__data__"] = pd.NaT
 
-    total_mes = q_dia + q_mes_ate_ontem
-    return q_dia, q_mes_ant, q_mes_ate_ontem, total_mes
+    if hora_col:
+        df["__hora__"] = pd.to_datetime(df[hora_col], errors="coerce").dt.time
+    else:
+        df["__hora__"] = None
 
-def _contagens_status(prof_id: str):
-    """
-    Contagens por status (linha 2):
-    - Confirmados (geral)
-    - Pendentes (geral)
-    - Cancelados (geral)
-    - Concluídos (hoje)  <-- NOVO
-    """
+    if status_col:
+        df["__status__"] = df[status_col].astype(str).str.upper()
+    else:
+        df["__status__"] = "PENDENTE"
+
+    if valor_col:
+        df["__valor__"] = _try_numeric(df[valor_col]).fillna(0.0)
+    else:
+        df["__valor__"] = 0.0
+
+    # Join com profissionais (nome)
+    dfp = _load_df(TAB_PROFISSIONAIS)
+    if not dfp.empty and prof_id_col:
+        prof_id = next((c for c in dfp.columns if c.lower() in ("id","prof_id","cod_profissional","codigo")), None)
+        prof_nome = next((c for c in dfp.columns if c.lower() in ("nome","nome_prof","razao_social","profissional")), None)
+        if prof_id and prof_nome:
+            df = df.merge(dfp[[prof_id, prof_nome]], left_on=prof_id_col, right_on=prof_id, how="left", suffixes=("","_p"))
+            df.rename(columns={prof_nome: "__prof__"}, inplace=True)
+        else:
+            df["__prof__"] = None
+    else:
+        df["__prof__"] = None
+
+    # Join com tipos de serviço (nome)
+    dft = _load_df(TAB_TIPOS)
+    if not dft.empty and tipo_id_col:
+        tipo_id = next((c for c in dft.columns if c.lower() in ("id","tipo_id","cod_tipo","codigo")), None)
+        tipo_nome = next((c for c in dft.columns if c.lower() in ("nome","descricao","servico","título","titulo")), None)
+        if tipo_id and tipo_nome:
+            df = df.merge(dft[[tipo_id, tipo_nome]], left_on=tipo_id_col, right_on=tipo_id, how="left", suffixes=("","_t"))
+            df.rename(columns={tipo_nome: "__servico__"}, inplace=True)
+        else:
+            df["__servico__"] = None
+    else:
+        df["__servico__"] = None
+
+    # Índices auxiliares
+    df["__ano__"] = pd.Series([d.year if isinstance(d, date) else None for d in df["__data__"]])
+    df["__mes__"] = pd.Series([d.month if isinstance(d, date) else None for d in df["__data__"]])
+
+    return df
+
+# -----------------------------
+# Filtros de período
+# -----------------------------
+def _filtros_periodo(df: pd.DataFrame):
     hoje = date.today()
+    anos = sorted([a for a in df["__ano__"].dropna().unique().tolist() if a], reverse=True) if not df.empty else [hoje.year]
+    ano_sel = st.selectbox("Ano", anos, index=0 if hoje.year in anos else 0)
 
-    confirmados = _count_exact(
-        supabase.table("ag_agenda")
-        .select("id", count="exact")
-        .eq("profissional_id", prof_id)
-        .eq("status", "Confirmado")
-    )
-    pendentes = _count_exact(
-        supabase.table("ag_agenda")
-        .select("id", count="exact")
-        .eq("profissional_id", prof_id)
-        .eq("status", "Pendente")
-    )
-    cancelados = _count_exact(
-        supabase.table("ag_agenda")
-        .select("id", count="exact")
-        .eq("profissional_id", prof_id)
-        .eq("status", "Cancelado")
-    )
-    concluidos_hoje = _count_exact(
-        supabase.table("ag_agenda")
-        .select("id", count="exact")
-        .eq("profissional_id", prof_id)
-        .eq("status", "Concluído")
-        .eq("data_atendimento", str(hoje))
-    )
-    return confirmados, pendentes, cancelados, concluidos_hoje
+    meses_opts = list(range(1,13))
+    try:
+        labels = [f"{m:02d} - {month_name[m].capitalize()}" for m in meses_opts]
+    except Exception:
+        labels = [f"{m:02d}" for m in meses_opts]
+    # preseleciona mês atual se houver dados; senão, primeiro item
+    idx_mes = (hoje.month-1) if hoje.year == ano_sel else 0
+    mes_sel = st.selectbox("Mês", meses_opts, format_func=lambda m: labels[m-1], index=idx_mes)
+    return ano_sel, mes_sel
 
-def _kpi_card(label: str, value: int):
-    html = f"""
-    <div class="kpi-card">
-        <div class="kpi-value">{value}</div>
-        <div class="kpi-label">{label}</div>
-    </div>
-    """
-    st.markdown(html, unsafe_allow_html=True)
+def _aplicar_periodo(df: pd.DataFrame, ano: int, mes: int) -> pd.DataFrame:
+    if df.empty:
+        return df
+    filt = (df["__ano__"] == ano) & (df["__mes__"] == mes)
+    return df.loc[filt].copy()
 
-def render():
-    _inject_css()
-    _header()
+# -----------------------------
+# KPIs
+# -----------------------------
+def _kpi(label: str, value: str):
+    st.markdown(
+        f"""
+        <div class='kpi-card'>
+          <div class='kpi-value'>{value}</div>
+          <div class='kpi-label'>{label}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    user = st.session_state.get("user", {})
-    prof_id = user.get("id")
-    if not prof_id:
-        st.error("Profissional não identificado na sessão.")
+def _area_kpis(df_mes: pd.DataFrame, ano: int, mes: int):
+    ref = f"{ano}/{str(mes).zfill(2)}"
+    if df_mes.empty:
+        st.markdown("### 🏷️ Resumo do mês")
+        st.markdown("<div class='kpi-grid'>", unsafe_allow_html=True)
+        _kpi("Atendimentos", f"0 · {ref}")
+        _kpi("Confirmados", f"0 · {ref}")
+        _kpi("Cancelados", f"0 · {ref}")
+        _kpi("Ticket Médio", f"R$ 0,00 · {ref}")
+        st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    # Linha 1 — KPIs básicos
-    a, b, c, d = _contagens_basicas(prof_id)
-    st.markdown('<div class="kpi-row"></div>', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns(4, gap="small")
-    with c1: _kpi_card("Atendimentos do dia", a)
-    with c2: _kpi_card("Atendimentos mês anterior", b)
-    with c3: _kpi_card("Atendimentos até ontem", c)
-    with c4: _kpi_card("Total no mês (a + c)", d)
+    total = len(df_mes)
+    confirmados = int((df_mes["__status__"] == "CONFIRMADO").sum())
+    cancelados = int((df_mes["__status__"] == "CANCELADO").sum())
 
-    # Linha 2 — KPIs por status (Confirmados, Pendentes, Cancelados, Concluídos hoje)
-    conf, pend, canc, concl_hoje = _contagens_status(prof_id)
-    st.markdown('<div class="kpi-row"></div>', unsafe_allow_html=True)
-    s1, s2, s3, s4 = st.columns(4, gap="small")
-    with s1: _kpi_card("Agendamentos Confirmados", conf)
-    with s2: _kpi_card("Agendamentos Pendentes", pend)
-    with s3: _kpi_card("Agendamentos Cancelados", canc)
-    with s4: _kpi_card("Concluídos (hoje)", concl_hoje)
+    # Ticket médio: soma de valores de CONFIRMADO / quantidade confirmados
+    soma_confirmados = float(df_mes.loc[df_mes["__status__"] == "CONFIRMADO", "__valor__"].sum())
+    ticket_medio = (soma_confirmados / confirmados) if confirmados > 0 else 0.0
 
-    #st.divider()
-    #st.caption("KPIs com gradiente #28B78D → #243743 → #A1A9AE. Ajuste em style.css se quiser novas cores.")
+    st.markdown("### 🏷️ Resumo do mês")
+    st.markdown("<div class='kpi-grid'>", unsafe_allow_html=True)
+    _kpi("Atendimentos", f"{total} · {ref}")
+    _kpi("Confirmados", f"{confirmados} · {ref}")
+    _kpi("Cancelados", f"{cancelados} · {ref}")
+    _kpi("Ticket Médio", f"{_fmt_brl(ticket_medio)} · {ref}")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# -----------------------------
+# Gráficos e Tabelas
+# -----------------------------
+def _evolucao_diaria(df_mes: pd.DataFrame):
+    st.markdown("### 📈 Evolução diária (quantidade)")
+    if df_mes.empty:
+        st.caption("Sem dados no período selecionado.")
+        return
+    serie = df_mes.groupby("__data__")["__status__"].count().rename("Qtde").reset_index().sort_values("__data__")
+    serie = serie.set_index("__data__")
+    st.line_chart(serie)
+
+def _distribuicao_status(df_mes: pd.DataFrame):
+    st.markdown("### 📌 Distribuição por status")
+    if df_mes.empty:
+        st.caption("Sem dados no período selecionado.")
+        return
+    dist = df_mes["__status__"].value_counts().rename_axis("Status").reset_index(name="Qtde")
+    st.dataframe(dist, hide_index=True, use_container_width=True)
+
+def _top_profissionais(df_mes: pd.DataFrame, topn=5):
+    st.markdown("### 🧑‍🔧 Top Profissionais (por atendimentos confirmados)")
+    if df_mes.empty or "__prof__" not in df_mes.columns:
+        st.caption("Sem dados para profissionais.")
+        return
+    base = df_mes[df_mes["__status__"] == "CONFIRMADO"]
+    if base.empty:
+        st.caption("Sem confirmados no período.")
+        return
+    top = base["__prof__"].fillna("(Sem nome)").value_counts().head(topn).rename_axis("Profissional").reset_index(name="Qtde")
+    st.bar_chart(top.set_index("Profissional"))
+
+def _top_servicos(df_mes: pd.DataFrame, topn=5):
+    st.markdown("### 💈 Top Serviços (por atendimentos confirmados)")
+    if df_mes.empty or "__servico__" not in df_mes.columns:
+        st.caption("Sem dados para serviços.")
+        return
+    base = df_mes[df_mes["__status__"] == "CONFIRMADO"]
+    if base.empty:
+        st.caption("Sem confirmados no período.")
+        return
+    top = base["__servico__"].fillna("(Sem nome)").value_counts().head(topn).rename_axis("Serviço").reset_index(name="Qtde")
+    st.bar_chart(top.set_index("Serviço"))
+
+def _tabela_detalhe(df_mes: pd.DataFrame):
+    st.markdown("### 📋 Detalhamento do mês")
+    if df_mes.empty:
+        st.caption("Sem dados no período selecionado.")
+        return
+
+    # Monta tabela amigável
+    show = pd.DataFrame({
+        "Data": pd.to_datetime(df_mes["__data__"]).dt.strftime("%d/%m/%Y"),
+        "Hora": df_mes["__hora__"].astype(str),
+        "Profissional": df_mes.get("__prof__", pd.Series([""] * len(df_mes))),
+        "Serviço": df_mes.get("__servico__", pd.Series([""] * len(df_mes))),
+        "Status": df_mes["__status__"],
+        "Valor": df_mes["__valor__"].map(_fmt_brl),
+    })
+    st.dataframe(show, hide_index=True, use_container_width=True)
+
+    # Exportador CSV
+    csv = show.to_csv(index=False).encode("utf-8")
+    st.download_button(
+        "Baixar CSV do mês",
+        data=csv,
+        file_name="dashboard_agenda_mes.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+
+# -----------------------------
+# Página
+# -----------------------------
+def render():
+    st.markdown("## 📊 Dashboard")
+
+    df = _load_agenda_norm()
+    if df.empty:
+        st.info("Sem dados de agenda.")
+        return
+
+    # Filtros (Ano/Mês)
+    col_a, col_m = st.columns([1, 1])
+    with col_a:
+        ano, _ = _filtros_periodo(df)
+    with col_m:
+        # como _filtros_periodo cria o select de mês, precisamos ler o valor criado ali.
+        # Porém, para manter controle claro, chamamos novamente para obter o mesmo mês escolhido.
+        # (Streamlit reusa o estado, então o resultado é igual.)
+        _, mes = _filtros_periodo(df)
+
+    # Aplica período
+    df_mes = _aplicar_periodo(df, ano, mes)
+
+    # KPIs
+    _area_kpis(df_mes, ano, mes)
+
+    # Layout de gráficos
+    st.markdown("---")
+    c1, c2 = st.columns(2)
+    with c1:
+        _evolucao_diaria(df_mes)
+    with c2:
+        _distribuicao_status(df_mes)
+
+    c3, c4 = st.columns(2)
+    with c3:
+        _top_profissionais(df_mes)
+    with c4:
+        _top_servicos(df_mes)
+
+    st.markdown("---")
+    _tabela_detalhe(df_mes)
