@@ -59,13 +59,16 @@ def _get_debug_flag() -> bool:
 DEBUG = _get_debug_flag()
 
 # =========================
-# Tela de Login
+# Tela de Login (ajustada no topo)
 # =========================
 def tela_login():
-    st.markdown("<div class='page-container'>", unsafe_allow_html=True)
+    # leve respiro no topo, sem centralizar verticalmente
+    st.markdown("<div style='margin-top:2vh'></div>", unsafe_allow_html=True)
 
-    _, center, _ = st.columns([1, 1.1, 1])
+    # layout centrado horizontalmente
+    _, center, _ = st.columns([1, 1.05, 1])
     with center:
+        # card visual (classe vem do style.css, mas não depende dela para funcionar)
         st.markdown("<div class='auth-card'>", unsafe_allow_html=True)
 
         c1, c2 = st.columns([1, 3])
@@ -73,7 +76,7 @@ def tela_login():
             st.image("start.png", use_container_width=True)
         with c2:
             st.markdown(
-                "<h1 class='titulo-app'>Agenda Profissional</h1>"
+                "<h1 class='titulo-app' style='margin-top:6px'>Agenda Profissional</h1>"
                 "<p class='muted'>Acesse com seu e-mail e senha</p>",
                 unsafe_allow_html=True,
             )
@@ -84,8 +87,6 @@ def tela_login():
             logar = st.form_submit_button("Entrar", use_container_width=True)
 
         st.markdown("</div>", unsafe_allow_html=True)  # fecha .auth-card
-
-    st.markdown("</div>", unsafe_allow_html=True)  # fecha .page-container
 
     if logar:
         try:
@@ -108,7 +109,7 @@ def sidebar_menu(is_admin: bool) -> str:
     with st.sidebar:
         # Cabeçalho visual
         st.markdown("<div class='sidebar-header'>", unsafe_allow_html=True)
-        st.image("start.png", use_container_width=True)  # sem deprecation
+        st.image("start.png", use_container_width=True)
         st.markdown("<div class='brand-title'>Agenda Profissional</div>", unsafe_allow_html=True)
 
         u = st.session_state.user or {}
@@ -157,7 +158,7 @@ def sidebar_menu(is_admin: bool) -> str:
                     "transition": "background 120ms ease"
                 },
                 "nav-link-selected": {
-                    "background-color": "#1e8f6c",   # destaque mais forte
+                    "background-color": "#1e8f6c",   # destaque forte
                     "color": "white",
                     "font-weight": "700",
                     "box-shadow": "0 2px 8px rgba(0,0,0,.12)"
