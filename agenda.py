@@ -250,7 +250,7 @@ def _card_agendamento(row: pd.Series, data_col: str, hora_col: str | None, statu
                         else:
                             atualizar_registro(TAB_AGENDA, int(rid), {"status": novo_status})
                             st.toast("✅ Status atualizado")
-                            st.experimental_rerun()
+                            st.rerun()
                     except Exception as e:
                         st.error("Falha ao mover agendamento.")
                         if st.session_state.get("DEBUG"): st.exception(e)
@@ -271,7 +271,7 @@ def _card_agendamento(row: pd.Series, data_col: str, hora_col: str | None, statu
                                 "obs": nova_obs
                             })
                             st.toast("✅ Alterações salvas")
-                            st.experimental_rerun()
+                            st.rerun()
                     except Exception as e:
                         st.error("Falha ao alterar agendamento.")
                         if st.session_state.get("DEBUG"): st.exception(e)
@@ -286,7 +286,7 @@ def _card_agendamento(row: pd.Series, data_col: str, hora_col: str | None, statu
                     else:
                         excluir_registro(TAB_AGENDA, int(rid))
                         st.toast("🗑️ Agendamento excluído")
-                        st.experimental_rerun()
+                        st.rerun()
                 except Exception as e:
                     st.error("Falha ao excluir agendamento.")
                     if st.session_state.get("DEBUG"): st.exception(e)
