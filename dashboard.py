@@ -83,7 +83,7 @@ def _load_agenda_norm() -> pd.DataFrame:
     return df
 
 # -----------------------------
-# Filtros (uma única vez!)
+# Filtros
 # -----------------------------
 def _filtros_periodo(df: pd.DataFrame):
     hoje = date.today()
@@ -103,18 +103,15 @@ def _aplicar_periodo(df: pd.DataFrame, ano: int, mes: int) -> pd.DataFrame:
     return df[(df["__ano__"] == ano) & (df["__mes__"] == mes)].copy()
 
 # -----------------------------
-# KPIs
+# KPIs (forçados 4 colunas lado-a-lado)
 # -----------------------------
-def _kpi(label: str, value: str):
-    st.markdown(
-        f"""
-        <div class='kpi-card'>
-          <div class='kpi-value'>{value}</div>
-          <div class='kpi-label'>{label}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def _kpi_html(label: str, value: str) -> str:
+    return f"""
+    <div class='kpi-card'>
+      <div class='kpi-value'>{value}</div>
+      <div class='kpi-label'>{label}</div>
+    </div>
+    """
 
 def _area_kpis(df_mes: pd.DataFrame, ano: int, mes: int):
     ref = f"{ano}/{str(mes).zfill(2)}"
@@ -125,12 +122,15 @@ def _area_kpis(df_mes: pd.DataFrame, ano: int, mes: int):
     ticket_medio = (soma_confirmados / confirmados) if confirmados > 0 else 0.0
 
     st.markdown("### 🏷️ Resumo do mês")
-    st.markdown("<div class='kpi-grid'>", unsafe_allow_html=True)
-    _kpi("Atendimentos", f"{total} · {ref}")
-    _kpi("Confirmados", f"{confirmados} · {ref}")
-    _kpi("Cancelados", f"{cancelados} · {ref}")
-    _kpi("Ticket Médio", f"{_fmt_brl(ticket_medio)} · {ref}")
-    st.markdown("</div>", unsafe_allow_html=True)
+    c1, c2, c3, c4 = st.columns(4)   # <-- garante uma linha com 4 colunas
+    with c1:
+        st.markdown(_kpi_html("Atendimentos", f"{total} · {ref}"), unsafe_allow_html=True)
+    with c2:
+        st.markdown(_kpi_html("Confirmados", f"{confirmados} · {ref}"), unsafe_allow_html=True)
+    with c3:
+        st.markdown(_kpi_html("Cancelados", f"{cancelados} · {ref}"), unsafe_allow_html=True)
+    with c4:
+        st.markdown(_kpi_html("Ticket Médio", f"{_fmt_brl(ticket_medio)} · {ref}"), unsafe_allow_html=True)
 
 # -----------------------------
 # Gráficos/Tabelas
