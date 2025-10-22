@@ -1,15 +1,61 @@
-# app.py
 from pathlib import Path
 import streamlit as st
 from streamlit_option_menu import option_menu
 from auth import validar_login
 
 # =========================
-# Configuração inicial
+# Estado inicial (sidebar)
 # =========================
-st.set_page_config(page_title="Agenda Profissional", page_icon="📅", layout="wide")
+if "sidebar_hidden" not in st.session_state:
+    st.session_state.sidebar_hidden = False
 
+# =========================
+# Configuração inicial (layout + estado inicial expandido)
+# =========================
+st.set_page_config(page_title="Agenda Profissional", page_icon="📅", layout="wide", initial_sidebar_state="expanded")
+
+# =========================
+# CSS utilitários de visibilidade
+# =========================
+HIDE_SIDEBAR_CSS = """
+<style>
+[data-testid="stSidebar"] { display: none !important; }
+</style>
+"""
+
+SHOW_SIDEBAR_CSS = """
+<style>
+[data-testid="stSidebar"] { display: block !important; visibility: visible !important; opacity: 1 !important; }
+[data-testid="stSidebar"][aria-expanded="false"] { transform: none !important; margin-left: 0 !important; width: 18rem !important; min-width: 18rem !important; }
+</style>
+"""
+
+# =========================
+# FAB flutuante (toggle)
+# =========================
+FAB_CSS = """
+<style>
+.fab-toggle-menu {
+  position: fixed; left: 16px; top: 16px; z-index: 10000;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; border-radius: 999px;
+  background: #1e8f6c; color: #fff; text-decoration: none;
+  font-weight: 900; font-size: 18px; line-height: 1;
+  box-shadow: 0 6px 18px rgba(0,0,0,.22);
+  transition: transform .12s ease, box-shadow .12s ease, opacity .12s ease;
+}
+.fab-toggle-menu:hover { transform: translateY(-1px); box-shadow: 0 8px 22px rgba(0,0,0,.28); }
+.fab-toggle-menu:active { transform: translateY(0); box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+</style>
+"""
+
+def render_fab_toggle():
+    st.markdown(FAB_CSS, unsafe_allow_html=True)
+    st.markdown('<a class="fab-toggle-menu" href="?toggle_menu=1" title="Alternar menu">«</a>', unsafe_allow_html=True)
+
+# =========================
 # Oculta elementos nativos do Streamlit
+# =========================
 st.markdown(
     """
     <style>
@@ -36,11 +82,18 @@ def inject_global_css(path: str = "style.css"):
 
 inject_global_css()
 
+# Aplica CSS conforme estado atual
+if st.session_state.sidebar_hidden:
+    st.markdown(HIDE_SIDEBAR_CSS, unsafe_allow_html=True)
+else:
+    st.markdown(SHOW_SIDEBAR_CSS, unsafe_allow_html=True)
+
 # =========================
 # Estado & utilidades
 # =========================
 if "user" not in st.session_state:
     st.session_state.user = None
+
 
 def _get_debug_flag() -> bool:
     # Compatível com versões antigas e novas do Streamlit
@@ -59,8 +112,33 @@ def _get_debug_flag() -> bool:
 DEBUG = _get_debug_flag()
 
 # =========================
+# Tratamento do toggle via query param
+# =========================
+
+def _handle_toggle_param():
+    try:
+        qp = {}
+        try:
+            qp = st.query_params
+        except Exception:
+            qp = st.experimental_get_query_params()
+        has_toggle = False
+        if isinstance(qp, dict) and "toggle_menu" in qp:
+            has_toggle = True
+        if has_toggle:
+            st.session_state.sidebar_hidden = not st.session_state.sidebar_hidden
+            try:
+                st.query_params.clear()  # 1.32+
+            except Exception:
+                st.experimental_set_query_params()  # versões antigas -> limpa
+            st.rerun()
+    except Exception:
+        pass
+
+# =========================
 # Tela de Login (ajustada no topo)
 # =========================
+
 def tela_login():
     # leve respiro no topo, sem centralizar verticalmente
     st.markdown("<div style='margin-top:2vh'></div>", unsafe_allow_html=True)
@@ -105,6 +183,7 @@ def tela_login():
 # =========================
 # Sidebar (menu lateral)
 # =========================
+
 def sidebar_menu(is_admin: bool) -> str:
     with st.sidebar:
         # Cabeçalho visual
@@ -179,6 +258,7 @@ def sidebar_menu(is_admin: bool) -> str:
 # =========================
 # Renderização de páginas
 # =========================
+
 def _render_page(modname: str):
     try:
         page = __import__(modname)
@@ -197,11 +277,20 @@ def _render_page(modname: str):
 # =========================
 # Main
 # =========================
+
 def main():
+    # 1) Trata clique no FAB (query param) no início do ciclo
+    _handle_toggle_param()
+
+    # 2) Exibe sempre o FAB flutuante
+    render_fab_toggle()
+
+    # 3) Fluxo de login
     if not st.session_state.user:
         tela_login()
         return
 
+    # 4) Conteúdo autenticado
     u = st.session_state.user
     selected = sidebar_menu(u.get("is_admin", False))
 
