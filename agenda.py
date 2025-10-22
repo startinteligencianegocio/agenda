@@ -1,336 +1,610 @@
 # agenda.py
 import streamlit as st
-import pandas as pd
 from datetime import date, time, datetime, timedelta
-from urllib.parse import quote_plus
+from urllib.parse import quote
+import pandas as pd
+import re
 
-# Funções de banco (ajuste conforme seu módulo/database)
 from database import listar_registros, inserir_registro, atualizar_registro, excluir_registro
+from utils_layout import whatsapp_icon
 
-TAB_AGENDA = "ag_agenda"
-TAB_CLIENTES = "ag_clientes"
-TAB_PROFISSIONAIS = "ag_profissionais"
-TAB_TIPOS = "ag_tipos_servicos"
+STATUS = ["Pendente", "Confirmado", "Concluído", "Cancelado"]
+FORM_NS = "agenda_form_v"
 
-STATUS_OPCOES = ["PENDENTE", "CONFIRMADO", "CANCELADO"]
+# ----------------------
+# Utilidades telefone
+# ----------------------
+def _digits_only(s: str | None) -> str:
+    return re.sub(r"\D", "", s or "")
 
-def _get_df(tabela: str, filtros: dict | None = None) -> pd.DataFrame:
-    """Wrapper com fallback seguro em caso de ausência de registros/colunas."""
-    try:
-        rows = listar_registros(tabela, filtros or {})
-        df = pd.DataFrame(rows) if rows else pd.DataFrame()
-        return df
-    except Exception as e:
-        st.warning(f"Não foi possível listar registros de {tabela}.")
-        if st.session_state.get("DEBUG"):
-            st.exception(e)
-        return pd.DataFrame()
+def _format_phone_br(s: str | None) -> str:
+    d = _digits_only(s)
+    # (DD) 9XXXX-XXXX (11 dígitos) ou (DD) XXXX-XXXX (10 dígitos)
+    if len(d) >= 11:
+        return f"({d[:2]}) {d[2:7]}-{d[7:11]}"
+    if len(d) == 10:
+        return f"({d[:2]}) {d[2:6]}-{d[6:10]}"
+    if len(d) >= 2:
+        return f"({d[:2]}) {d[2:]}"
+    return d
 
-def _select_cliente(pro_key: str = "cli"):
-    df = _get_df(TAB_CLIENTES)
-    if df.empty:
-        return None, None, None, st.selectbox("Cliente", ["(cadastre clientes)"], index=0, key=f"{pro_key}_empty", disabled=True)
-    # tenta colunas comuns
-    nome_col = next((c for c in df.columns if c.lower() in ("nome", "nome_razao", "nome_razao_social", "razao_social", "cliente")), None)
-    id_col = next((c for c in df.columns if c.lower() in ("id", "cliente_id", "cod_cliente", "codigo")), None)
-    fone_col = next((c for c in df.columns if "fone" in c.lower() or "cel" in c.lower() or "telefone" in c.lower()), None)
-    email_col = next((c for c in df.columns if "mail" in c.lower() or "email" in c.lower()), None)
+def _header():
+    col_logo, col_title = st.columns([1, 6])
+    with col_logo:
+        st.image("start.png", width=80)
+    with col_title:
+        st.markdown("<h2>Agenda</h2>", unsafe_allow_html=True)
 
-    df["_label"] = df.apply(lambda r: f"{str(r.get(id_col,''))} — {str(r.get(nome_col,''))}".strip(" —"), axis=1) if not df.empty else ""
-    escolha = st.selectbox("Cliente", df["_label"].tolist(), index=0 if not df.empty else None, key=f"{pro_key}_cli")
-    if not escolha or df.empty:
-        return None, None, None, escolha
-    row = df[df["_label"] == escolha].iloc[0]
-    return row.get(id_col), row.get(nome_col), row.get(fone_col), escolha
+def _carregar_clientes(prof_id: str):
+    return listar_registros("ag_clientes", {"profissional_id": prof_id}, order="nome")
 
-def _select_profissional(pro_key: str = "pro"):
-    df = _get_df(TAB_PROFISSIONAIS)
-    if df.empty:
-        return None, None, st.selectbox("Profissional", ["(cadastre profissionais)"], index=0, key=f"{pro_key}_empty", disabled=True)
-    nome_col = next((c for c in df.columns if c.lower() in ("nome", "nome_prof", "profissional", "razao_social")), None)
-    id_col = next((c for c in df.columns if c.lower() in ("id", "prof_id", "cod_profissional", "codigo")), None)
+def _carregar_profissional(prof_id: str) -> dict | None:
+    arr = listar_registros("ag_profissionais", {"id": prof_id})
+    return arr[0] if arr else None
 
-    df["_label"] = df.apply(lambda r: f"{str(r.get(id_col,''))} — {str(r.get(nome_col,''))}".strip(" —"), axis=1)
-    escolha = st.selectbox("Profissional", df["_label"].tolist(), index=0, key=f"{pro_key}_prof")
-    row = df[df["_label"] == escolha].iloc[0]
-    return row.get(id_col), row.get(nome_col), escolha
+def _v() -> int:
+    if FORM_NS not in st.session_state:
+        st.session_state[FORM_NS] = 0
+    return st.session_state[FORM_NS]
 
-def _select_tipo_servico(key: str = "tipo"):
-    df = _get_df(TAB_TIPOS)
-    if df.empty:
-        return None, st.selectbox("Tipo de Serviço", ["(cadastre tipos de serviços)"], index=0, key=f"{key}_empty", disabled=True)
-    nome_col = next((c for c in df.columns if c.lower() in ("nome", "descricao", "servico", "titulo")), None)
-    id_col = next((c for c in df.columns if c.lower() in ("id", "tipo_id", "cod_tipo", "codigo")), None)
-    preco_col = next((c for c in df.columns if "preco" in c.lower() or "valor" in c.lower()), None)
+def _k(name: str) -> str:
+    return f"{FORM_NS}_{name}_{_v()}"
 
-    df["_label"] = df.apply(
-        lambda r: f"{str(r.get(id_col,''))} — {str(r.get(nome_col,''))}" + (f" (R$ {r.get(preco_col):.2f})" if preco_col in df.columns and pd.notna(r.get(preco_col)) else ""),
-        axis=1
-    )
-    escolha = st.selectbox("Tipo de Serviço", df["_label"].tolist(), index=0, key=f"{key}_tipo")
-    row = df[df["_label"] == escolha].iloc[0]
-    return row.get(id_col), escolha
+@st.dialog("Editar Atendimento")
+def modal_editar(item):
+    with st.form(f"form_edit_ag_{item['id']}"):
+        cliente_nome = st.text_input("Cliente", value=item.get("cliente_nome", ""))
+        tel_raw = st.text_input(
+            "Telefone",
+            value=item.get("cliente_telefone", ""),
+            key=f"tel_ag_edit_{item['id']}",
+            help="Digite apenas números ou no formato (DD) 9XXXX-XXXX"
+        )
+        # Mostra pré-visualização formatada
+        tel_preview = _format_phone_br(tel_raw)
+        if tel_preview and tel_preview != tel_raw:
+            st.caption(f"Formatado: {tel_preview}")
 
-def _whatsapp_link(nome_prof: str, data_ag: date, hora_ini: time, fone: str | None) -> str | None:
-    if not fone:
-        return None
-    data_str = data_ag.strftime("%d/%m/%Y")
-    hora_str = hora_ini.strftime("%H:%M")
-    # Mensagem em 2 linhas como você pediu:
+        data_atendimento = st.date_input("Data", value=date.fromisoformat(item.get("data_atendimento")))
+        hora_inicio = st.time_input("Hora início", value=time.fromisoformat(item.get("hora_inicio")))
+        hora_fim = st.time_input("Hora fim", value=time.fromisoformat(item.get("hora_fim")))
+        status = st.selectbox("Status", STATUS, index=STATUS.index(item.get("status", "Pendente")))
+        observacoes = st.text_area("Observações", value=item.get("observacoes", ""))
+        salvar = st.form_submit_button("Salvar")
+    if salvar:
+        telefone_fmt = _format_phone_br(tel_raw)
+        atualizar_registro("ag_agenda", item["id"], {
+            "cliente_nome": cliente_nome,
+            "cliente_telefone": telefone_fmt,  # mantém salvo formatado como antes
+            "data_atendimento": str(data_atendimento),
+            "hora_inicio": str(hora_inicio),
+            "hora_fim": str(hora_fim),
+            "status": status,
+            "observacoes": observacoes,
+        })
+        st.success("Atualizado!")
+        st.rerun()
+
+def _whatsapp_link(nome_prof: str, tel: str, data_str: str, hora_ini: str):
+    num = (tel or "").replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
     msg = (
-        f"Aqui é {nome_prof}, você tem um horário agendado em {data_str} às {hora_str} hrs.\n"
-        "Por Favor, responda : 1 - Confirmar / 2 - Cancelar"
+        f"Aqui é {nome_prof}, você tem um horário agendado em {data_str} às {hora_ini} hrs.\n"
+        f"Por Favor, responda : 1 - Confirmar / 2 - Cancelar"
     )
-    texto = quote_plus(msg)
-    # Normaliza número (tira símbolos); assuma DDI Brasil se faltando
-    numero = "".join([c for c in str(fone) if c.isdigit()])
-    if numero and numero.startswith("0"):
-        numero = numero.lstrip("0")
-    if len(numero) <= 11 and not numero.startswith("55"):
-        numero = "55" + numero
-    return f"https://wa.me/{numero}?text={texto}"
+    return f"https://wa.me/{num}?text={quote(msg)}"
 
-def _form_incluir_agenda():
-    st.subheader("➕ Incluir agendamento")
-    with st.form("form_ag_incluir", clear_on_submit=True):
-        col1, col2, col3, col4 = st.columns([1, 1, 1, 1])
-        with col1:
-            data_ag = st.date_input("Data", value=date.today())
-        with col2:
-            hora_ini = st.time_input("Hora início", value=time(9, 0))
-        with col3:
-            duracao_min = st.number_input("Duração (min)", min_value=15, max_value=480, value=60, step=15)
-        with col4:
-            status = st.selectbox("Status", STATUS_OPCOES, index=0)
+# ----------------------
+# Utilidades Tab 3
+# ----------------------
+def _to_dt(d: date, t: time) -> datetime:
+    return datetime.combine(d, t)
 
-        col5, col6 = st.columns([1, 1])
-        with col5:
-            prof_id, prof_nome, _ = _select_profissional("inc")
-        with col6:
-            cli_id, cli_nome, cli_fone, _ = _select_cliente("inc")
+def _overlaps(a_ini: datetime, a_fim: datetime, b_ini: datetime, b_fim: datetime) -> bool:
+    # intervalo [início, fim)
+    return (a_ini < b_fim) and (a_fim > b_ini)
 
-        tipo_id, _ = _select_tipo_servico("inc")
+def _weekday_iso(d: date) -> int:
+    # ISO: Monday=1 ... Sunday=7
+    return (d.weekday() + 1)
 
-        obs = st.text_area("Observações", placeholder="Observações do atendimento (opcional)", height=80)
+def _weekday_pt(d: date) -> str:
+    nomes = ["Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado", "Domingo"]
+    return nomes[d.weekday()]
 
-        enviar = st.form_submit_button("Incluir", use_container_width=True)
+def _feriados_fixos_br(ano: int) -> set[date]:
+    base = [
+        (1, 1),   # Confraternização Universal
+        (4, 21),  # Tiradentes
+        (5, 1),   # Dia do Trabalho
+        (9, 7),   # Independência
+        (10, 12), # N. Sra. Aparecida
+        (11, 2),  # Finados
+        (11, 15), # Proclamação da República
+        (12, 25), # Natal
+    ]
+    return {date(ano, m, d) for (m, d) in base}
 
-    if enviar:
+def _dia_permitido(d: date, prof: dict) -> bool:
+    ds = (prof.get("dias_semana") or "").strip()
+    if ds:
+        permitidos = {int(x) for x in ds.split(",") if x.strip().isdigit()}
+        return _weekday_iso(d) in permitidos
+    wd = _weekday_iso(d)
+    if wd in {1, 2, 3, 4, 5}:
+        return True
+    if wd == 6:
+        return bool(prof.get("aceita_sabado"))
+    if wd == 7:
+        return bool(prof.get("aceita_domingo"))
+    return True
+
+def _as_time(prof: dict | None, field: str, default: time | None) -> time | None:
+    if not prof:
+        return default
+    val = prof.get(field)
+    if not val:
+        return default
+    try:
+        s = str(val)
+        if len(s) == 5:
+            s += ":00"
+        hh, mm, ss = map(int, s.split(":"))
+        return time(hh, mm, ss)
+    except Exception:
+        return default
+
+def _build_grade_disponibilidade(
+    dados_agenda: list,
+    prof: dict,
+    prof_id: str,
+    data_ini: date,
+    data_fim: date,
+    jornada_ini: time,
+    jornada_fim: time,
+    slot_min: int,
+    buffer_min: int,
+    almoco_ini: time | None,
+    almoco_fim: time | None,
+    considerar_feriados: bool,
+    capacidade: int,
+) -> pd.DataFrame:
+    rows = []
+
+    idx = {}
+    for a in dados_agenda:
+        if str(a.get("profissional_id")) != str(prof_id):
+            continue
         try:
-            payload = {
-                "data": data_ag.isoformat(),
-                "hora_inicio": hora_ini.strftime("%H:%M:%S"),
-                "duracao_min": int(duracao_min),
-                "status": status,
-                "profissional_id": prof_id,
-                "cliente_id": cli_id,
-                "tipo_id": tipo_id,
-                "obs": obs,
-                "criado_em": datetime.now().isoformat(sep=" ", timespec="seconds"),
-            }
-            inserir_registro(TAB_AGENDA, payload)
-            st.toast("✅ Agenda inserida", icon="✅")
+            d = date.fromisoformat(a.get("data_atendimento"))
+            if not (data_ini <= d <= data_fim):
+                continue
+            hi = time.fromisoformat(a.get("hora_inicio"))
+            hf = time.fromisoformat(a.get("hora_fim"))
+        except Exception:
+            continue
+        idx.setdefault(d, []).append({
+            "ini": _to_dt(d, hi),
+            "fim": _to_dt(d, hf),
+            "cliente": a.get("cliente_nome", ""),
+            "status": a.get("status", ""),
+            "obs": a.get("observacoes", "")
+        })
 
-            # Mostra link do WhatsApp já no fluxo de inclusão:
-            wa = _whatsapp_link(prof_nome or "", data_ag, hora_ini, cli_fone)
-            if wa:
-                st.markdown(
-                    f"<a href='{wa}' target='_blank' class='btn btn-whatsapp btn-whatsapp-large'>Abrir WhatsApp</a>",
-                    unsafe_allow_html=True,
-                )
-        except Exception as e:
-            st.error("Falha ao incluir agendamento.")
-            if st.session_state.get("DEBUG"):
-                st.exception(e)
+    feriados = set()
+    if considerar_feriados:
+        for an in {data_ini.year, data_fim.year}:
+            feriados |= _feriados_fixos_br(an)
 
-def _filtro_periodo():
-    with st.expander("📅 Filtro de período", expanded=True):
-        col1, col2, col3 = st.columns([1,1,1])
-        with col1:
-            inicio = st.date_input("Início", value=date.today() - timedelta(days=0), key="f_ini")
-        with col2:
-            fim = st.date_input("Fim", value=date.today(), key="f_fim")
-        with col3:
-            profiltro = st.text_input("Filtrar por Profissional (contém)", placeholder="Nome, parte do nome…")
-    return inicio, fim, profiltro
+    dia = data_ini
+    while dia <= data_fim:
+        if not _dia_permitido(dia, prof):
+            dia += timedelta(days=1)
+            continue
+        if considerar_feriados and dia in feriados:
+            dia += timedelta(days=1)
+            continue
 
-def _carregar_agendas(inicio: date, fim: date, profiltro: str = "") -> pd.DataFrame:
-    df = _get_df(TAB_AGENDA)
-    if df.empty:
-        return df
+        slot_ini = _to_dt(dia, jornada_ini)
+        jornada_f = _to_dt(dia, jornada_fim)
 
-    # Normaliza possíveis colunas
-    # datas
-    data_col = next((c for c in df.columns if c.lower() in ("data", "data_agenda", "dt_agenda", "dia")), None)
-    hora_col = next((c for c in df.columns if "hora" in c.lower() and "inicio" in c.lower()), None)
-    status_col = next((c for c in df.columns if c.lower() == "status"), None)
-    prof_id_col = next((c for c in df.columns if "prof" in c.lower() and "id" in c.lower()), None)
-    cli_id_col = next((c for c in df.columns if "cli" in c.lower() and "id" in c.lower()), None)
-    obs_col = next((c for c in df.columns if c.lower() in ("obs", "observacao", "observacoes")), None)
+        while slot_ini < jornada_f:
+            slot_fim = slot_ini + timedelta(minutes=int(slot_min))
+            if slot_fim > jornada_f:
+                break
 
-    # converte datas/horas
-    if data_col:
-        df[data_col] = pd.to_datetime(df[data_col], errors="coerce").dt.date
-    if hora_col and hora_col in df.columns:
-        df[hora_col] = pd.to_datetime(df[hora_col], errors="coerce").dt.time
-    # filtra período
-    if data_col:
-        df = df[(df[data_col] >= inicio) & (df[data_col] <= fim)]
+            if almoco_ini and almoco_fim:
+                a_ini = _to_dt(dia, almoco_ini)
+                a_fim = _to_dt(dia, almoco_fim)
+                if _overlaps(slot_ini, slot_fim, a_ini, a_fim):
+                    slot_ini = max(slot_fim, a_fim)
+                    continue
 
-    # join com profissionais e clientes para exibir nomes/telefones
-    dfp = _get_df(TAB_PROFISSIONAIS)
-    dfc = _get_df(TAB_CLIENTES)
-    nome_prof_col = next((c for c in (dfp.columns if not dfp.empty else []) if c.lower() in ("nome","nome_prof","razao_social","profissional")), None)
-    id_prof_col = next((c for c in (dfp.columns if not dfp.empty else []) if c.lower() in ("id","prof_id","cod_profissional","codigo")), None)
-    nome_cli_col = next((c for c in (dfc.columns if not dfc.empty else []) if c.lower() in ("nome","nome_razao","razao_social","cliente")), None)
-    id_cli_col = next((c for c in (dfc.columns if not dfc.empty else []) if c.lower() in ("id","cliente_id","cod_cliente","codigo")), None)
-    fone_cli_col = next((c for c in (dfc.columns if not dfc.empty else []) if "fone" in c.lower() or "cel" in c.lower() or "telefone" in c.lower()), None)
+            sobrepos = 0
+            det_cliente = det_status = det_obs = ""
+            for ag in idx.get(dia, []):
+                if _overlaps(slot_ini, slot_fim, ag["ini"], ag["fim"]):
+                    sobrepos += 1
+                    if not det_cliente:
+                        det_cliente, det_status, det_obs = ag["cliente"], ag["status"], ag["obs"]
 
-    if not df.empty and data_col:
-        # adiciona colunas auxiliares
-        if prof_id_col and not dfp.empty and id_prof_col:
-            df = df.merge(dfp[[id_prof_col, nome_prof_col]], left_on=prof_id_col, right_on=id_prof_col, how="left", suffixes=("","_p"))
-            df.rename(columns={nome_prof_col: "nome_prof"}, inplace=True)
-        if cli_id_col and not dfc.empty and id_cli_col:
-            base_cols = [id_cli_col]
-            if nome_cli_col: base_cols.append(nome_cli_col)
-            if fone_cli_col: base_cols.append(fone_cli_col)
-            df = df.merge(dfc[base_cols], left_on=cli_id_col, right_on=id_cli_col, how="left", suffixes=("","_c"))
-            if nome_cli_col: df.rename(columns={nome_cli_col: "nome_cli"}, inplace=True)
-            if fone_cli_col: df.rename(columns={fone_cli_col: "fone_cli"}, inplace=True)
+            situacao = "Disponível" if sobrepos < int(capacidade or 1) else "Ocupado"
 
-        # filtro por nome do profissional
-        if profiltro and "nome_prof" in df.columns:
-            df = df[df["nome_prof"].astype(str).str.contains(profiltro, case=False, na=False)]
+            rows.append({
+                "Data": dia.strftime("%Y-%m-%d"),
+                "Dia Semana": _weekday_pt(dia),
+                "Horário": f"{slot_ini.strftime('%H:%M')} - {slot_fim.strftime('%H:%M')}",
+                "Situação": situacao,
+                "Cliente": det_cliente if situacao == "Ocupado" else "",
+                "Status Atendimento": det_status if situacao == "Ocupado" else "",
+                "Obs.": det_obs if situacao == "Ocupado" else "",
+            })
 
-        # normalização segura
-        if status_col and status_col in df.columns:
-            df["status_norm"] = df[status_col].astype(str).str.upper()
-        else:
-            df["status_norm"] = "PENDENTE"
+            slot_ini = slot_fim + timedelta(minutes=int(buffer_min or 0))
 
-        if hora_col and hora_col in df.columns:
-            df["hora_sort"] = df[hora_col].apply(lambda x: (x.hour, x.minute) if pd.notna(x) else (99,99))
-        else:
-            df["hora_sort"] = (99,99)
+        dia += timedelta(days=1)
 
-        df.sort_values(by=[data_col, "hora_sort"], inplace=True, ignore_index=True)
-
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df["__d"] = pd.to_datetime(df["Data"])
+        df["__h"] = df["Horário"].str.slice(0, 5)
+        df = df.sort_values(["__d", "__h"]).drop(columns=["__d", "__h"])
     return df
 
-def _card_agendamento(row: pd.Series, data_col: str, hora_col: str | None, status_col: str | None):
-    nome_prof = str(row.get("nome_prof") or "")
-    nome_cli = str(row.get("nome_cli") or "")
-    fone_cli = row.get("fone_cli")
-    obs = row.get("obs") or row.get("observacao") or ""
+# ----------------------
+# RENDER
+# ----------------------
+def render():
+    _header()
+    u = st.session_state.get("user", {})
+    prof_id = u.get("id")
+    prof_nome = u.get("nome")
 
-    d: date = row.get(data_col)
-    h: time | None = row.get(hora_col) if hora_col else None
-    htxt = h.strftime("%H:%M") if isinstance(h, time) else "--:--"
-
-    with st.container(border=True):
-        st.markdown(f"**{nome_cli or '(Sem nome)'}** — {nome_prof or '(Sem prof.)'}")
-        st.caption(f"📅 {d.strftime('%d/%m/%Y')} • 🕒 {htxt}")
-        if obs:
-            st.write(obs)
-
-        # Botões de ação
-        st.markdown("<div class='kanban-actions'>", unsafe_allow_html=True)
-        c1, c2, c3, c4 = st.columns([1,1,1,1])
-
-        # MOVER (troca de status via select)
-        with c1:
-            with st.popover("Mover", use_container_width=True):
-                novo_status = st.selectbox("Novo status", STATUS_OPCOES, index=0, key=f"mv_{row.name}_{d}_{htxt}")
-                if st.button("Aplicar", use_container_width=True, key=f"mv_ok_{row.name}_{d}_{htxt}"):
-                    try:
-                        rid = row.get("id") or row.get("ID") or row.get("pk") or row.get("codigo")
-                        if rid is None:
-                            st.error("ID não encontrado para atualizar.")
-                        else:
-                            atualizar_registro(TAB_AGENDA, int(rid), {"status": novo_status})
-                            st.toast("✅ Status atualizado")
-                            st.rerun()
-                    except Exception as e:
-                        st.error("Falha ao mover agendamento.")
-                        if st.session_state.get("DEBUG"): st.exception(e)
-
-        # ALTERAR (abre um mini form inline)
-        with c2:
-            with st.popover("Alterar", use_container_width=True):
-                nova_hora = st.time_input("Hora", value=h or time(9,0), key=f"alt_hr_{row.name}_{d}_{htxt}")
-                nova_obs = st.text_area("Observações", value=str(obs), key=f"alt_obs_{row.name}_{d}_{htxt}")
-                if st.button("Salvar", use_container_width=True, key=f"alt_ok_{row.name}_{d}_{htxt}"):
-                    try:
-                        rid = row.get("id") or row.get("ID") or row.get("pk") or row.get("codigo")
-                        if rid is None:
-                            st.error("ID não encontrado para atualizar.")
-                        else:
-                            atualizar_registro(TAB_AGENDA, int(rid), {
-                                "hora_inicio": nova_hora.strftime("%H:%M:%S"),
-                                "obs": nova_obs
-                            })
-                            st.toast("✅ Alterações salvas")
-                            st.rerun()
-                    except Exception as e:
-                        st.error("Falha ao alterar agendamento.")
-                        if st.session_state.get("DEBUG"): st.exception(e)
-
-        # EXCLUIR
-        with c3:
-            if st.button("Excluir", use_container_width=True, key=f"del_{row.name}_{d}_{htxt}"):
-                try:
-                    rid = row.get("id") or row.get("ID") or row.get("pk") or row.get("codigo")
-                    if rid is None:
-                        st.error("ID não encontrado para excluir.")
-                    else:
-                        excluir_registro(TAB_AGENDA, int(rid))
-                        st.toast("🗑️ Agendamento excluído")
-                        st.rerun()
-                except Exception as e:
-                    st.error("Falha ao excluir agendamento.")
-                    if st.session_state.get("DEBUG"): st.exception(e)
-
-        # WHATSAPP
-        with c4:
-            wa = _whatsapp_link(nome_prof, d, h or time(0,0), fone_cli)
-            if wa:
-                st.markdown(f"<a href='{wa}' target='_blank' class='btn btn-whatsapp btn-whatsapp-large'>WhatsApp</a>", unsafe_allow_html=True)
-            else:
-                st.caption("Sem telefone para WhatsApp")
-        st.markdown("</div>", unsafe_allow_html=True)
-
-def _kanban(df: pd.DataFrame):
-    if df.empty:
-        st.info("Sem agendamentos para o período selecionado.")
+    if not prof_id:
+        st.error("Profissional não identificado na sessão.")
         return
 
-    data_col = next((c for c in df.columns if c.lower() in ("data","data_agenda","dt_agenda","dia")), None)
-    hora_col = next((c for c in df.columns if "hora" in c.lower() and "inicio" in c.lower()), None)
-    status_col = next((c for c in df.columns if c.lower() == "status"), None)
+    if st.session_state.get("flash_agenda_ok"):
+        st.toast("✅ Agenda inserida com sucesso!", icon="🎉")
+        st.success("Agenda inserida com sucesso!")
+        del st.session_state["flash_agenda_ok"]
 
-    cols = st.columns(3)
-    blocos = [("PENDENTE", cols[0]), ("CONFIRMADO", cols[1]), ("CANCELADO", cols[2])]
+    profissional = _carregar_profissional(prof_id)
+    dados = listar_registros("ag_agenda", {"profissional_id": prof_id})
 
-    for status, col in blocos:
-        with col:
-            st.markdown(f"### {status.title()}")
-            sub = df[df["status_norm"] == status].reset_index(drop=True)
-            if sub.empty:
-                st.caption("— vazio —")
-            else:
-                for _, row in sub.iterrows():
-                    _card_agendamento(row, data_col, hora_col, status_col)
+    tab1, tab2, tab3 = st.tabs(["📝 Agendar", "📊 Dashboard", "🗓️ Disponibilidade"])
 
-def render():
-    st.markdown("## 📆 Agenda")
-    _form_incluir_agenda()
+    # ---------------- TAB 1: Agendar ----------------
+    with tab1:
+        clientes = _carregar_clientes(prof_id)
+        nomes = [c.get("nome", "") for c in clientes]
+        mapa_nome_cli = {c.get("nome", ""): c for c in clientes}
 
-    st.markdown("---")
-    inicio, fim, profiltro = _filtro_periodo()
-    df = _carregar_agendas(inicio, fim, profiltro)
+        st.subheader("Novo atendimento")
+        col_sel, _ = st.columns([2, 6])
+        with col_sel:
+            nome_sel = st.selectbox(
+                "Cliente",
+                options=["(Novo cliente)"] + nomes,
+                index=0,
+                key=f"{FORM_NS}_cli_sel_outside"
+            )
 
-    _kanban(df)
+        with st.form("form_ag", border=True):
+            c2, c3, c4 = st.columns(3)
+            with c2:
+                data_atendimento = st.date_input("Data", value=date.today(), key=_k("data"))
+            with c3:
+                hora_inicio = st.time_input("Hora Início", key=_k("hora_ini"))
+                observacoes = st.text_area("Observações", key=_k("obs"))
+            with c4:
+                dur = st.number_input(
+                    "Duração (min)", min_value=5, step=5,
+                    value=int((profissional or {}).get("slot_minutos") or 30),
+                    key=_k("dur")
+                )
+                status = st.selectbox("Status", STATUS, index=0, key=_k("status"))
 
-    with st.expander("🛠️ Disponibilidade (em breve)"):
-        st.caption("Área reservada para futuras configurações de grade de horários do profissional.")
+            enviar = st.form_submit_button("Incluir", type="primary")
+
+        if enviar:
+            if nome_sel == "(Novo cliente)":
+                st.error("Selecione um cliente existente ou cadastre-o primeiro no módulo **Clientes**.")
+                st.stop()
+
+            cli = mapa_nome_cli.get(nome_sel)
+            if not cli:
+                st.error("Cliente inválido. Atualize a página e tente novamente.")
+                st.stop()
+
+            hi = datetime.combine(data_atendimento, hora_inicio)
+            hf = hi + timedelta(minutes=int(dur))
+
+            inserir_registro("ag_agenda", {
+                "profissional_id": prof_id,
+                "cliente_id": int(cli["id"]),
+                "cliente_nome": cli.get("nome", ""),
+                "cliente_telefone": _format_phone_br(cli.get("telefone", "")),
+                "data_atendimento": str(data_atendimento),
+                "hora_inicio": str(hora_inicio),
+                "hora_fim": str(hf.time()),
+                "status": status,
+                "observacoes": observacoes,
+            })
+            st.session_state["flash_agenda_ok"] = True
+            st.session_state[FORM_NS] = _v() + 1
+            st.rerun()
+
+    # ---------------- TAB 2: Dashboard ----------------
+    with tab2:
+        # --- CSS (Streamlit 1.50): KPIs + Kanban (somente visual) ---
+        st.markdown("""
+        <style>
+        /* ===== KPIs (st.metric): fonte branca + gradientes ===== */
+        .stApp [data-testid="stMetric"] [data-testid="stMetricValue"],
+        .stApp [data-testid="stMetric"] [data-testid="stMetricLabel"],
+        .stApp [data-testid="stMetric"] [data-testid="stMetricDelta"]{
+          color:#fff !important;
+        }
+        .stApp [data-testid="stMetric"] svg{
+          filter:brightness(0) invert(1);
+        }
+        .stApp [data-testid="stMetric"]{
+          border-radius:16px;
+          padding:12px 16px;
+          box-shadow:0 4px 14px rgba(0,0,0,.08);
+          background:#111827; /* fallback */
+        }
+
+        /* Gradientes por coluna (funciona na fileira de KPIs) */
+        .stApp [data-testid="column"]:nth-of-type(1) [data-testid="stMetric"]{
+          background: linear-gradient(135deg,#1e3a8a,#3b82f6);
+        } /* Total */
+        .stApp [data-testid="column"]:nth-of-type(2) [data-testid="stMetric"]{
+          background: linear-gradient(135deg,#92400e,#f59e0b);
+        } /* Pendente */
+        .stApp [data-testid="column"]:nth-of-type(3) [data-testid="stMetric"]{
+          background: linear-gradient(135deg,#065f46,#10b981);
+        } /* Confirmado */
+        .stApp [data-testid="column"]:nth-of-type(4) [data-testid="stMetric"]{
+          background: linear-gradient(135deg,#064e3b,#34d399);
+        } /* Concluído */
+        .stApp [data-testid="column"]:nth-of-type(5) [data-testid="stMetric"]{
+          background: linear-gradient(135deg,#7f1d1d,#ef4444);
+        } /* Cancelado */
+
+        /* ===== Kanban: evita corte e centraliza rótulos ===== */
+        .kanban-actions .stButton > button{
+          width: 100% !important;
+          white-space: normal;           /* quebra se faltar espaço */
+          display: flex;                 /* centraliza com ícone/emoji */
+          align-items: center;
+          justify-content: center;
+          gap: 6px;
+          border-radius: 10px;
+          font-weight: 600;
+        }
+        .kanban-actions .stButton > button:hover { transform: translateY(-1px); }
+
+        /* Paleta por ação — visual apenas */
+        .kanban-actions .btn-mover   > button { background:#2563eb; color:#fff; }
+        .kanban-actions .btn-alterar > button { background:#10b981; color:#fff; }
+        .kanban-actions .btn-excluir > button { background:#ef4444; color:#fff; }
+        </style>
+        """, unsafe_allow_html=True)
+        # --- FIM CSS ---
+
+        st.subheader("Resumo da Agenda")
+        total = len(dados)
+        por_status = {s: 0 for s in STATUS}
+        for a in dados:
+            por_status[a.get("status", "Pendente")] = por_status.get(a.get("status", "Pendente"), 0) + 1
+
+        # Wrapper opcional — não é necessário para o CSS, mas não atrapalha
+        st.markdown("<div id='kpi-wrap'>", unsafe_allow_html=True)
+        k1, k2, k3, k4, k5 = st.columns(5)
+        k1.metric("Total", total)
+        k2.metric("Pendente", por_status.get("Pendente", 0))
+        k3.metric("Confirmado", por_status.get("Confirmado", 0))
+        k4.metric("Concluído", por_status.get("Concluído", 0))
+        k5.metric("Cancelado", por_status.get("Cancelado", 0))
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        st.divider()
+        st.subheader("Atendimentos por Status (Kanban)")
+
+        dados_por_status = {s: [] for s in STATUS}
+        for a in dados:
+            s = a.get("status", "Pendente")
+            if s not in dados_por_status:
+                s = "Pendente"
+            dados_por_status[s].append(a)
+
+        cols = st.columns(4)
+        for stt, col in zip(STATUS, cols):
+            with col:
+                st.markdown(f"<div class='kanban-title {stt.lower()}'>{stt}</div>", unsafe_allow_html=True)
+                for a in dados_por_status[stt]:
+                    with st.container(border=True):
+                        st.write(f"**{a['cliente_nome']}**")
+                        st.write(f"📅 {a['data_atendimento']} ⏰ {a['hora_inicio']} - {a['hora_fim']}")
+                        if a.get("observacoes"):
+                            st.write(a["observacoes"])
+
+                        # Mover (mantém sua lógica; apenas ícone/tooltip já na sua versão)
+                        m1, m2 = st.columns([2, 1])
+                        destinos = [s for s in STATUS if s != stt]
+                        novo_status = m1.selectbox("Mover para", options=destinos, key=f"mv_to_{a['id']}")
+                        mover = m2.button("🔀", key=f"mv_btn_{a['id']}", help="Alterar o status deste atendimento para a coluna selecionada")
+                        if mover:
+                            atualizar_registro("ag_agenda", a["id"], {"status": novo_status})
+                            st.success(f"Movido para {novo_status}")
+                            st.rerun()
+
+                        # Ações secundárias (mantidas com ícones)
+                        st.markdown("<div class='kanban-actions'>", unsafe_allow_html=True)
+                        cbtn1, cbtn2, cicon = st.columns([1, 1, 0.5])
+                        with cbtn1:
+                            edit = st.button("✏️", key=f"ag_edit_{a['id']}", help="Editar este atendimento")
+                        with cbtn2:
+                            delete = st.button("🗑️", key=f"ag_del_{a['id']}", help="Excluir este atendimento (clique duas vezes para confirmar)")
+                        with cicon:
+                            link = _whatsapp_link(prof_nome, a.get("cliente_telefone", ""), a["data_atendimento"], a["hora_inicio"])
+                            whatsapp_icon(link, size=40)
+                        st.markdown("</div>", unsafe_allow_html=True)
+
+                        if edit:
+                            modal_editar(a)
+                        if delete:
+                            if st.session_state.get(f"confirm_ag_{a['id']}") != True:
+                                st.session_state[f"confirm_ag_{a['id']}"] = True
+                                st.warning("Clique novamente para confirmar.")
+                            else:
+                                dependentes = listar_registros("ag_servicos", {"agenda_id": a["id"]})
+                                for dd in dependentes:
+                                    excluir_registro("ag_servicos", dd["id"])
+                                excluir_registro("ag_agenda", a["id"])
+                                st.success("Excluído!")
+                                st.rerun()
+
+    # ---------------- TAB 3: Disponibilidade ----------------
+    with tab3:
+        st.subheader("Disponibilidade por Período")
+
+        hoje = date.today()
+
+        j_ini_default = _as_time(profissional, "hora_inicio_jornada", time(8, 0))
+        j_fim_default = _as_time(profissional, "hora_fim_jornada", time(18, 0))
+        alm_ini_default = _as_time(profissional, "almoco_inicio", None)
+        alm_fim_default = _as_time(profissional, "almoco_fim", None)
+        slot_default = int((profissional or {}).get("slot_minutos") or 30)
+        buffer_default = int((profissional or {}).get("buffer_minutos") or 0)
+        cap_default = int((profissional or {}).get("capacidade_simultanea") or 1)
+        considerar_feriados = bool((profissional or {}).get("considerar_feriados") or False)
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            dt_ini = st.date_input("Data inicial", value=hoje, min_value=hoje, key="disp_dt_ini")
+        with c2:
+            dt_fim = st.date_input("Data final", value=hoje + timedelta(days=7), min_value=dt_ini, key="disp_dt_fim")
+        with c3:
+            jornada_inicio = st.time_input("Início da jornada", value=j_ini_default)
+        with c4:
+            jornada_fim = st.time_input("Fim da jornada", value=j_fim_default)
+
+        c5, c6, c7 = st.columns(3)
+        with c5:
+            slot_min = st.number_input("Duração do Slot (min)", min_value=5, step=5, value=slot_default)
+        with c6:
+            buffer_min = st.number_input("Buffer entre Slots (min)", min_value=0, step=5, value=buffer_default)
+        with c7:
+            cap_sim = st.number_input("Capacidade Simultânea", min_value=1, step=1, value=cap_default)
+
+        use_lunch = (alm_ini_default is not None and alm_fim_default is not None)
+        use_lunch = st.toggle("Considerar intervalo de almoço?", value=use_lunch, help="Ative para bloquear slots no horário do almoço.")
+        if use_lunch:
+            c8, c9 = st.columns(2)
+            with c8:
+                almoco_inicio = st.time_input("Almoço (início)", value=alm_ini_default or time(12, 0))
+            with c9:
+                almoco_fim = st.time_input("Almoço (fim)", value=alm_fim_default or time(13, 0))
+        else:
+            almoco_inicio, almoco_fim = None, None
+
+        if dt_ini < hoje:
+            st.warning("Ajustei a data inicial para hoje, pois não é permitido período anterior à data atual.")
+            dt_ini = hoje
+            if dt_fim < dt_ini:
+                dt_fim = dt_ini
+
+        if dt_fim < dt_ini:
+            st.error("A data final deve ser maior ou igual à data inicial.")
+            st.stop()
+
+        if jornada_fim <= jornada_inicio:
+            st.error("O fim da jornada deve ser maior que o início.")
+            st.stop()
+
+        if (almoco_inicio and almoco_fim) and almoco_fim <= almoco_inicio:
+            st.error("O fim do almoço deve ser maior que o início.")
+            st.stop()
+
+        df = _build_grade_disponibilidade(
+            dados_agenda=dados,
+            prof=profissional or {},
+            prof_id=str(prof_id),
+            data_ini=dt_ini,
+            data_fim=dt_fim,
+            jornada_ini=jornada_inicio,
+            jornada_fim=jornada_fim,
+            slot_min=int(slot_min),
+            buffer_min=int(buffer_min),
+            almoco_ini=almoco_inicio,
+            almoco_fim=almoco_fim,
+            considerar_feriados=considerar_feriados,
+            capacidade=int(cap_sim),
+        )
+
+        if not df.empty:
+            total_slots = len(df)
+            livres = int((df["Situação"] == "Disponível").sum())
+            ocupados = total_slots - livres
+            r1, r2, r3 = st.columns(3)
+            r1.metric("Slots no período", total_slots)
+            r2.metric("Disponíveis", livres)
+            r3.metric("Ocupados", ocupados)
+
+            def _color_row(row):
+                return (["background-color: #ffe5e5"] * len(row)) if row["Situação"] == "Ocupado" else (["background-color: #eaffea"] * len(row))
+
+            st.dataframe(
+                df.style.apply(_color_row, axis=1),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.divider()
+
+            st.markdown("#### Resumo por dia")
+            resumo = (
+                df.groupby("Data", as_index=False)
+                  .agg(
+                      total_slots=("Situação", "count"),
+                      disponiveis=("Situação", lambda s: int((s == "Disponível").sum())),
+                      ocupados=("Situação", lambda s: int((s == "Ocupado").sum())),
+                  )
+            )
+            resumo["taxa_ocupacao_%"] = (resumo["ocupados"] / resumo["total_slots"] * 100).round(1)
+
+            st.dataframe(
+                resumo,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.markdown("#### Gráfico: Ocupação por dia (%)")
+            chart_df = resumo[["Data", "taxa_ocupacao_%"]].set_index("Data")
+            st.bar_chart(chart_df, use_container_width=True)
+
+            cexp1, cexp2 = st.columns(2)
+            _ini_str = dt_ini.strftime("%Y%m%d")
+            _fim_str = dt_fim.strftime("%Y%m%d")
+
+            csv_full = df.to_csv(index=False).encode("utf-8-sig")
+            cexp1.download_button(
+                "⬇️ Baixar disponibilidade (CSV)",
+                data=csv_full,
+                file_name=f"disponibilidade_{_ini_str}_{_fim_str}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+
+            csv_resumo = resumo.to_csv(index=False).encode("utf-8-sig")
+            cexp2.download_button(
+                "⬇️ Baixar resumo por dia (CSV)",
+                data=csv_resumo,
+                file_name=f"disponibilidade_resumo_{_ini_str}_{_fim_str}.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
+        else:
+            st.info("Nenhum horário encontrado para o período configurado.")

@@ -270,3 +270,56 @@ ul[role="listbox"] li a:hover{
   transform: translateX(2px);
   border-radius: 10px !important;
 }
+
+/* =========================================================
+   (NOVO) APENAS COMPLEMENTOS PARA AS NOVAS FUNCIONALIDADES
+   — KPIs com fonte branca e cores individuais (escopo #kpi-wrap)
+   — Botões do Kanban sem corte + classes visuais
+   Não altera regras existentes.
+   ========================================================= */
+
+/* ===== KPIs do Dashboard (escopo: #kpi-wrap) ===== */
+#kpi-wrap [data-testid="stMetric"] [data-testid="stMetricValue"],
+#kpi-wrap [data-testid="stMetric"] [data-testid="stMetricLabel"],
+#kpi-wrap [data-testid="stMetric"] [data-testid="stMetricDelta"]{
+  color:#fff !important;
+}
+#kpi-wrap [data-testid="stMetric"] svg{
+  filter:brightness(0) invert(1);
+}
+#kpi-wrap [data-testid="stMetric"]{
+  border-radius:16px;
+  padding:12px 16px;
+  box-shadow:0 4px 14px rgba(0,0,0,.08);
+}
+
+/* Cores individuais por coluna (visual apenas) */
+#kpi-wrap [data-testid="column"]:nth-of-type(1) [data-testid="stMetric"]{ background:linear-gradient(135deg,#1e3a8a,#3b82f6); } /* Total */
+#kpi-wrap [data-testid="column"]:nth-of-type(2) [data-testid="stMetric"]{ background:linear-gradient(135deg,#92400e,#f59e0b); } /* Pendente */
+#kpi-wrap [data-testid="column"]:nth-of-type(3) [data-testid="stMetric"]{ background:linear-gradient(135deg,#065f46,var(--success)); } /* Confirmado */
+#kpi-wrap [data-testid="column"]:nth-of-type(4) [data-testid="stMetric"]{ background:linear-gradient(135deg,#064e3b,#34d399); } /* Concluído */
+#kpi-wrap [data-testid="column"]:nth-of-type(5) [data-testid="stMetric"]{ background:linear-gradient(135deg,#7f1d1d,var(--danger)); } /* Cancelado */
+
+/* ===== Kanban: ações sem corte e com hint ===== */
+.kanban-actions{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  align-items:center;
+}
+.kanban-actions .stButton > button{
+  width:100% !important;
+  white-space:normal;             /* permite quebrar se faltar espaço */
+  display:flex; align-items:center; justify-content:center; gap:6px;
+  border-radius:10px; font-weight:600;
+}
+
+/* Classes utilitárias para cores por ação (sem afetar botões globais) */
+.kanban-actions .btn-mover   > button{ background:#2563eb !important; color:#fff !important; }
+.kanban-actions .btn-alterar > button{ background:var(--success) !important; color:#fff !important; }
+.kanban-actions .btn-excluir > button{ background:var(--danger) !important;  color:#fff !important; }
+
+/* Opcional: leve “lift” ao passar o mouse (consistente com seu hover global) */
+.kanban-actions .stButton > button:hover{
+  transform: translateY(-1px);
+}
