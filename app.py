@@ -8,15 +8,25 @@ from auth import validar_login
 # Configuração inicial
 # =========================
 
-st.set_page_config(page_title="Agenda Profissional", page_icon="📅", layout="wide")
+st.set_page_config(
+    page_title="Agenda Profissional",
+    page_icon="📅",
+    layout="wide",
+    initial_sidebar_state="expanded",  # garante a sidebar expandida (inclusive no mobile)
+)
 
-# Oculta elementos nativos do Streamlit
+# Oculta elementos nativos do Streamlit (reexibiremos o header no mobile via media query)
 st.markdown(
     """
     <style>
       #MainMenu {visibility: hidden;}
       header {visibility: hidden;}
       footer {visibility: hidden;}
+
+      /* No mobile, precisamos do header para o botão de abrir a sidebar */
+      @media (max-width: 768px) {
+        header {visibility: visible !important;}
+      }
     </style>
     """,
     unsafe_allow_html=True,
@@ -155,11 +165,11 @@ def sidebar_menu(is_admin: bool) -> str:
                     "font-size": "16px",
                     "text-align": "left",
                     "margin": "2px 0",
-                    "--hover-color": "#dff7ef",      # hover verdinho
+                    "--hover-color": "#dff7ef",
                     "transition": "background 120ms ease"
                 },
                 "nav-link-selected": {
-                    "background-color": "#1e8f6c",   # destaque forte
+                    "background-color": "#1e8f6c",
                     "color": "white",
                     "font-weight": "700",
                     "box-shadow": "0 2px 8px rgba(0,0,0,.12)"
